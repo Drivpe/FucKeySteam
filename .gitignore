@@ -1,0 +1,56 @@
+# 样本与解包产物一律不入库。
+# 本仓库是探针工作区，只承载文档、脚本与测试宿主源码。
+# 原始样本（KeySteam.exe）、解包出的 main.dll、onefile payload 副本、
+# 数据目录备份、运行期缓存，全部留在 /mnt/d/03_Work/03_Develop/KeySteam v2.99/ 原地。
+
+# 默认可执行与二进制
+*.exe
+*.dll
+*.pyd
+*.so
+*.dylib
+*.bin
+*.dat
+*.ttf
+*.ico
+*.png
+*.jpg
+*.wav
+
+# 解包产物与备份目录
+payload/
+backup/
+cache/
+bin/
+work/
+onefile_*/
+
+# 构建输出
+build/
+out/
+dist/
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# 运行期与工具噪声
+*.log
+*.bak
+*.bak-*
+*.patched
+monitor-*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
