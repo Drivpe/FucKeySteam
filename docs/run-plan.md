@@ -126,6 +126,158 @@ cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shik
 
 ---
 
+## 紧循环观测（2026-09-15 新增，用于 `#7` 问题一）
+
+### 先读这条：`timeout` 杀不掉宿主（实测踩坑）
+
+**2026-09-15 实测事故**：用 `timeout 12 powershell.exe ... host.exe ...` 做开关验证，四条命令返回码都是 `0`、输出正常。但 `timeout` 只杀掉了 **PowerShell 调用方**，`host.exe` 本体存活了下来——**4 个宿主进程挂着 40 多分钟**，每个都带着一个 `KeySteam v2.99` 窗口。
+
+这正是本文档 §「执行方式」里那条「宿主必须由人手动运行」的**同一原因**：宿主会弹模态窗口，任何外层超时机制都只能杀死调用方，杀不掉它。
+
+**后果**（本次已核查，零破坏）：残留进程停在验证码弹窗（模态阻塞），未走到 `start_initialization`，所以样本 cleanup 未触发——插件目录 5 文件完好、数据目录 mtime 未变、主号目录无写入、原始样本哈希一致。**但这是运气，不是保证**：若残留进程越过了弹窗，它会杀 Steam、清插件目录。
+
+**因此**：
+
+- **不要用 `timeout` / `Start-Job` / 任何外层超时包裹宿主调用**，除非同时确认能终止 `host.exe`
+- 监控脚本可以包（纯输出、无窗口）
+- **每次运行前先查残留**：
+  ```bash
+  powershell.exe -NoProfile -Command "Get-Process host -ErrorAction SilentlyContinue | Select-Object Id,StartTime,MainWindowTitle"
+  ```
+  有输出就先 `Stop-Process -Force`，否则本次观测被污染
+
+### 目的
+
+消除验证码弹窗触发链的三分支歧义——(a) 弹窗不需联网即可触发、(b) 联网发生了但短于采样间隔、(c) 联网走了别的进程。
+
+### 为什么原来的采样率不够
+
+**实测数据**（本机）：
+
+```
+Get-Process + Get-NetTCPConnection 一次完整采样 = 224 ms
+```
+
+原脚本用 `Start-Sleep -Milliseconds 500`，所以**每轮循环的真实周期 ≈ 724 ms**，而 `-Seconds` 的语义是**循环次数**、不是秒数（`for ($i = 0; $i -lt $Seconds; $i++)`）。
+
+于是原 `-Seconds 600` 的实际时长 ≈ 434 秒，而样本从进程出现到弹窗只活 **2.09 秒**：
+
+```
+2.09 s / 0.724 s ≈ 2.9 个采样点
+```
+
+**这是对早先记录的更正**：此前的手续文档写「约 4 个采样点」，按实测周期应为 **≈ 3 个**，且其中只有 1 个可能落在弹窗之前。这个数字把「未捕捉到持续 ≥500ms 的外部连接」的归因能力进一步压低——**3 个采样点连一次稳态连接都不足以证实**。
+
+### 三件对齐的判据
+
+| 事件 | 前置观测 | 含义 |
+| --- | --- | --- |
+| **DNS 解析** | 运行前后 `Get-DnsClientCache` 差分 | 新增 `key.steamofl.com` 条目 ⇒ 本次运行发起过解析 |
+| **TCP 连接** | 紧循环枚举到 `162.14.69.140` 的连接 | 出现 ⇒ 分支 (a) 排除 |
+| **窗口时刻** | 紧循环枚举 `倒卖可耻` / `验证` 标题 | 出现时刻与上述事件的时间关系 |
+
+`key.steamofl.com` 的当前解析值（实测）：**`162.14.69.140`**。
+
+**为什么盯 IP 而不是域名**：`Get-NetTCPConnection` 只给 IP，不给主机名。因此判据是「连到该 IP」，无需依赖 DNS 时序。若该 IP 变化，重新解析：`Resolve-DnsName key.steamofl.com -QuickTimeout`。
+
+**DNS 缓存没有查询时间戳**——字段只有 `Entry`/`Data`/`TTL`/`Status`。所以不能用「某个时刻缓存里有它」当判据，只能用**运行前快照 → 运行后快照的差集**。
+
+### 分支判读表
+
+| 观测结果 | 结论 | 后续 |
+| --- | --- | --- |
+| 连到 `162.14.69.140`，且早于弹窗 | 分支 (b) 或 (c)：弹窗需联网 | 需再区分进程归属 |
+| 连到该 IP，但归属进程**不是** `host*` | 分支 (c)：走了别的进程 | 检查 `steamclient64.dll` 侧 |
+| 无该 IP 连接，但 DNS 差集有该域名 | 解析了但未连接 | 倾向于 (a)，需看是否超时分支 |
+| 无连接、无 DNS 差分 | 分支 (a)：弹窗不需联网 | 弹窗由本地状态触发，转查票据本地校验 |
+
+### 脚本规格（`monitor_keysteam.ps1` 新增开关）
+
+在现有 `param` 块内追加（**注释必须在 param 块之外**，否则破坏解析——已踩过）：
+
+```powershell
+[int]$TightLoopMs = 0,     # 0 = 沿用 Start-Sleep 500；>0 = 紧循环间隔（毫秒）
+[string]$ResolveHost = "key.steamofl.com"   # 解析一次，用于取当前 IP
+```
+
+行为约定：
+
+- `-TightLoopMs 0`（默认）⇒ **完全保持现有行为**，否则会污染已验证过的默认路径
+- `-TightLoopMs -1` ⇒ 不 sleep，尽可能快（实测约 224 ms/轮）
+- `-TightLoopMs N`（N>0）⇒ `Start-Sleep -Milliseconds N`
+
+新增输出（沿用单一日志流 + 毫秒时间戳 + 事件前缀）：
+
+```
+[DNS] 解析 key.steamofl.com -> 162.14.69.140            ← 启动时一次
+[DNS] 新增缓存条目: key.steamofl.com -> 162.14.69.140   ← 与运行前快照的差集
+[IP]  目标 IP 连接: host -> 162.14.69.140:443  state=SynSent  ← 紧循环命中即报
+```
+
+现有前缀（`进程出现` / `网络连接` / `命名管道` / `!!! 关键窗口` / `插件被删除` / `!!! 主号目录…`）**不变**——它们已被既有判读逻辑依赖。
+
+`W()` 函数已输出 `HH:mm:ss.fff`（毫秒），无需改动——**这是三件对齐能成立的前提**。
+
+### 时长
+
+**紧循环 60 秒足够**。理由：弹窗在 2.09 秒内出现，紧循环下 60 秒 ≈ 268 个采样点，相对原方案的 3 个是 90 倍密度，且日志不会撑爆磁盘（每轮最多几行，且有 `$seen*` 去重）。
+
+**不要用 600**：紧循环跑满 434 秒会生成极大日志，且样本早已进入弹窗态、无新信息。
+
+### 失败处置（每类失败的预设动作）
+
+| 失败 | 判据 | 预设动作 |
+| --- | --- | --- |
+| `倒卖可耻` 窗口出现 | 日志含 `!!! 关键窗口` 且标题匹配 | **立即终止**（唯一按钮是「退出程序」，已无观测价值）。照旧 |
+| 主号目录被写 | 日志含 `!!! 主号目录` | **立即终止**，恢复主号目录，记录时刻 |
+| 插件目录被清 | 日志含 `插件被删除` | **不算失败**——这是样本 cleanup 的正常行为，记录时刻即可（它相对验证链的早晚有判读价值） |
+| 脚本自身崩溃 | `monitor-stdout.txt` 有异常、日志无 `=== 监控结束 ===` | 保留现场，改用 `-TightLoopMs 0` 降级重跑 |
+| 日志撑爆磁盘 | 日志 > 200 MB | 终止，缩短时长重跑 |
+| 宿主持不返回 | `run_code` 正常路径不返回（`Py_Exit` 终结进程） | **不算失败**——这是预期状态，见「中止条件」 |
+| 超时 | 60 秒紧循环结束而样本仍在 | 终止，关闭弹窗 |
+
+**双条件中止仍然有效**：`倒卖可耻` 出现 / 超时上限。
+
+### 一键恢复
+
+`config/stplug-in/` 与数据目录在每次运行后都可能被改。恢复命令（幂等，可重复执行）：
+
+```bash
+cd /mnt/d/03_Work/03_Develop/keysteam-unlock-spike
+
+# (a) 插件目录：从最新备份恢复，核对 5 个文件
+BK=$(ls -d .scratch/stplug-in-backup-* | tail -1)
+cp -a "$BK/." "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in/"
+ls -la "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in"   # 期望 5 个文件
+
+# (b) 数据目录：从 baseline 副本恢复，逐个核对 md5
+cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shiki.kodo} \
+   /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/
+md5sum /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/*.cache \
+       /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/*.json \
+       /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/*.kodo
+# 对照 _re/backup/BASELINE.txt
+```
+
+**恢复后必须核对**：`BASELINE.txt` 记有原始 md5。不一致说明恢复没成功，不要在此状态下跑下一次。
+
+### 验证 envp 那条支线的读数限制（**已知，先写清楚**）
+
+`#7` 的遗留疑问是「`NUITKA_ONEFILE_DIRECTORY` 注入是否生效」可当第三证据。本轮静态核实：
+
+- 该变量**确实存在于 `main.dll`**（命中 1 次），但与 `compiled_module`、`__nuitka_binary_dir` 同属 **Nuitka C 运行时字符串池**（`0x181d1b910`，`.data` 区），**不是样本 Python 层代码的消费点**
+- 样本真正读的是 **`NUITKA_ONEFILE_TEMP`**，消费点在 `src.utils.resources` 的 `candidate_resource_dirs`（"Return candidate directories that may contain bundled resources."）
+
+**读数限制（关键）**：宿主 stdout/stderr **只含 `host.c` 自己的诊断行**。样本层的资源解析痕迹**不会出现在那里**。因此这一轮「跑一次看日志」**看不到该变量的消费读数**。
+
+**要拿到读数，只有两条路**：
+1. 观察资源**查找失败**的外部后果（异常 / 降级 / 窗口行为异常）——但按模块边界严格重判，`src.utils.resources` 段内 `write_text`/`write_bytes`/`mkdir`/`unlink` **全部零命中**，它只组装内存候选列表
+2. 候选 C（`.pyd` 侧信道），代价是引入可检测面
+
+**结论：第三证据这条路当前不产生读数。** 本轮运行会顺手验证这一点（若 60 秒紧循环日志里没有任何资源解析痕迹，即证实其不可观测），但不为它单开一次运行。
+
+---
+
 ## 每次运行前（两次都一样）
 
 ```bash

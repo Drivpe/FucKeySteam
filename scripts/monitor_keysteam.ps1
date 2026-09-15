@@ -22,7 +22,9 @@ param(
     [string]$DataDir = "$env:APPDATA\Shikieiki",
     [string]$LogDir  = "$env:TEMP\ks_re",
     [string]$StubDir = "D:\02_Games\01_Steam\Steam\config\stplug-in",
-    [string]$MainAccountDir = "D:\02_Games\01_Steam\Steam\userdata\1398488476"
+    [string]$MainAccountDir = "D:\02_Games\01_Steam\Steam\userdata\1398488476",
+    [int]$TightLoopMs = 0,
+    [string]$ResolveHost = "key.steamofl.com"
 )
 
 $ErrorActionPreference = "Continue"
@@ -72,6 +74,46 @@ W "数据目录基线文件数: $($base.Count)"
 $seenProcs   = @{}
 $seenConns   = @{}
 $seenWindows = @{}
+
+# --- 紧循环观测的两项前提（2026-09-15 追加，#7 问题一）------
+#
+# 目标 IP：Get-NetTCPConnection 只给 IP 不给主机名，所以判据是
+# 「是否连到该 IP」。解析失败不算错误——只意味着本次无法用 IP 判据。
+$targetIps = @()
+if ($ResolveHost) {
+    try {
+        $targetIps = @(
+            Resolve-DnsName $ResolveHost -Type A -QuickTimeout -ErrorAction SilentlyContinue |
+                Where-Object { $_.IPAddress } |
+                ForEach-Object { $_.IPAddress } |
+                Select-Object -Unique
+        )
+    } catch { }
+    if ($targetIps.Count -gt 0) {
+        W "[DNS] 解析 $ResolveHost -> $($targetIps -join ', ')"
+    } else {
+        W "[DNS] WARN: 无法解析 $ResolveHost，本次运行无 IP 判据"
+    }
+}
+
+# DNS 缓存基线：缓存条目没有查询时间戳（字段只有 Entry/Data/TTL/Status），
+# 所以「本次是否发起过解析」只能靠运行前后的差集，不能靠「某时刻缓存里有它」。
+$dnsBase = @{}
+try {
+    Get-DnsClientCache -ErrorAction SilentlyContinue | ForEach-Object {
+        $dnsBase["$($_.Entry)|$($_.Data)"] = $true
+    }
+} catch { }
+W "[DNS] 缓存基线条目数: $($dnsBase.Count)"
+
+# 紧循环间隔的判读说明。实测一次完整采样（Get-Process + Get-NetTCPConnection）
+# 约 224 ms，所以原 -Milliseconds 500 的真实周期约 724 ms，
+# 而样本从进程出现到弹窗只活 2.09 秒 —— 约 3 个采样点。
+# 这是早先「未捕捉到持续 ≥500ms 的外连」这一结论归因能力弱的直接原因。
+$sleepMs = if ($TightLoopMs -eq 0) { 500 }
+           elseif ($TightLoopMs -lt 0) { 0 }
+           else { $TightLoopMs }
+W "采样间隔: ${sleepMs}ms（0 = 尽可能快；单次采样实测约 224ms）"
 
 # 观察名单（2026-09-15 统一）。原脚本用 `-like "*$_*"` 子串匹配，
 # 导致 nutstore_watchdog 被当成「守护进程出现」记录下来——
@@ -142,6 +184,44 @@ for ($i = 0; $i -lt $Seconds; $i++) {
                 }
             }
         }
+    }
+
+    # --- 3b. 目标 IP 专用检测（紧循环用；命中即报，不等去重）---
+    #
+    # 判据不依赖 DNS 时序：只要出现到目标 IP 的连接，分支 (a)
+    # 「弹窗不需要联网」立即被排除。这一条比通用网络段更灵敏——
+    # 通用段只记「首次见到的 (进程,远端) 组合」，而这里还记录状态变化，
+    # 因为 SynSent -> Established 的转变本身就能证明连接确曾发生。
+    if ($targetIps.Count -gt 0) {
+        try {
+            Get-NetTCPConnection -ErrorAction SilentlyContinue |
+                Where-Object { $targetIps -contains $_.RemoteAddress } |
+                ForEach-Object {
+                    $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
+                    $pn = if ($p) { $p.ProcessName } else { "?" }
+                    $key = "tgt|$pn|$($_.RemoteAddress):$($_.RemotePort)|$($_.State)"
+                    if (-not $seenConns.ContainsKey($key)) {
+                        $seenConns[$key] = $true
+                        W "[IP] 目标 IP 连接: $pn -> $($_.RemoteAddress):$($_.RemotePort)  state=$($_.State)"
+                    }
+                }
+        } catch { }
+    }
+
+    # --- 3c. DNS 缓存差分 ---
+    # 每轮查一次很贵（WMI 调用），所以低频做：每 10 轮一次。
+    # 缓存条目一旦出现会存活一个 TTL（观测到的值在 3000 量级），
+    # 所以低频采样不会漏掉「本次运行发起过解析」这一事实。
+    if (($i % 10) -eq 0) {
+        try {
+            Get-DnsClientCache -ErrorAction SilentlyContinue | ForEach-Object {
+                $k = "$($_.Entry)|$($_.Data)"
+                if (-not $dnsBase.ContainsKey($k)) {
+                    $dnsBase[$k] = $true
+                    W "[DNS] 新增缓存条目: $($_.Entry) -> $($_.Data)"
+                }
+            }
+        } catch { }
     }
 
     # --- 4. 窗口：弹窗与完整性锁标题 ---
@@ -231,11 +311,12 @@ for ($i = 0; $i -lt $Seconds; $i++) {
         }
     }
 
-    Start-Sleep -Milliseconds 500
+    if ($sleepMs -gt 0) { Start-Sleep -Milliseconds $sleepMs }
 }
 
 W "=== 监控结束 ==="
 W "进程数=$($seenProcs.Count) 连接数=$($seenConns.Count) 窗口数=$($seenWindows.Count)"
 W "插件目录剩余文件数=$($stubBase.Count)"
 W "主号目录文件数=$($mainBase.Count)"
+W "DNS 缓存总条目数=$($dnsBase.Count)"
 W "日志: $log"
