@@ -57,3 +57,9 @@ desktop.ini
 
 # 子代理诊断残留（临时探针，非交付物）
 .scratch/probe/
+
+# 临时备份（含样本侧插件副本：*.lua / *.ks 不在上面的黑名单里，
+# 必须显式排除，否则会被 git add -A 带进仓库）
+.scratch/*-backup-*/
+.scratch/backup-*/
+*.ks

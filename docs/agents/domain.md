@@ -58,6 +58,7 @@ There are no ADRs. The equivalent obligation here is **documentation drift**, wh
 | Host exit code `5` = environment variable setting failure | handoff §3.3 | **Corrected 2026-09-15** | No `return 5` exists in `host.c`. `LoadLibraryExW` failure yields **`3`**; the handoff omitted that row. See `host/README.md`. |
 | The host runs against an isolated environment | `AGENTS.md`; `docs/run-plan.md` checklist | **Corrected 2026-09-15** | This machine already runs this class of tool (`KeySteamTool.dll`, `cloud_redirect.dll`, `cloud_redirect.log` written today, modified `steam.exe`). The checklist now records measured state instead. See `AGENTS.md`. |
 | `gh issue view <n> --comments` is how you read an issue | `docs/agents/issue-tracker.md` | **Corrected 2026-09-15** | Fails outright on gh 2.46.0 (GraphQL requests the deprecated `repository.issue.projectCards`). Use the REST API via `gh api`; the doc now shows the working commands. |
+| The `.gitignore` is "whitelist-shaped", so a sample can never be staged by accident | `docs/agents/issue-tracker.md` | **Corrected 2026-09-15** | It is deny-list shaped — an enumeration of excluded patterns. The claim's consequence was real: sample-side plugin scripts (`*.lua`, `*.ks`) were not on the list, so `git add -A` would have committed them. Patterns added; the rule is now "check `git status` before `git add -A`". |
 
 ### On correcting an issue
 

@@ -29,7 +29,10 @@ The repository is **not** the same directory as the reverse-engineering workspac
 - **Repository** — `/mnt/d/03_Work/03_Develop/keysteam-unlock-spike`. Documents, scripts, host source. This is what git tracks and what `gh` operates on.
 - **Workspace** — `/mnt/d/03_Work/03_Develop/KeySteam v2.99`. Holds the sample (`KeySteam.exe`), the unpacked `main.dll`, the onefile payload copy, the data-directory backup, and the four analysis `.md` files. **Never** a git repo, never committed.
 
-The `.gitignore` here is whitelist-shaped: binaries and sample artifacts are excluded by pattern, so a sample can never be staged by accident even if work happens in the wrong directory.
+The `.gitignore` here is **deny-list shaped**: it enumerates patterns to exclude (`*.exe`, `*.dll`, `*.pyd`, `bin/`, `work/`, `*.log`, …). An earlier version of this document called it "whitelist-shaped" and claimed a sample could never be staged by accident — that was wrong on both counts, and the mistake had a concrete consequence: sample-side plugin scripts arrive as `*.lua` and `*.ks`, neither of which was on the deny list, so a `git add -A` would have committed them.
+
+The rule is therefore: **check `git status` before `git add -A`, and never stage the workspace wholesale.** If you introduce a new artifact class from the sample side, add its pattern to `.gitignore` in the same change.
+
 
 ## Pull requests as a triage surface
 
