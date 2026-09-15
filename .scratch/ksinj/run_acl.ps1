@@ -1,4 +1,3 @@
-# run_acl.ps1 - 启动样本并在其存活期间跑 DACL 对照实验（ASCII only）
 param(
     [string]$Sample = "D:\03_Work\03_Develop\KeySteam v2.99\KeySteam.exe",
     [string]$AclExe = "D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\ksinj\acltest.exe",
@@ -17,7 +16,6 @@ W "launching sample"
 $proc = Start-Process -FilePath $Sample -WorkingDirectory (Split-Path $Sample) -PassThru
 W "sample pid=$($proc.Id)"
 
-# 等 GUI 进程出现（多进程拓扑：bootstrap -> gui -> watchdog）
 $gui = 0
 $t0 = Get-Date
 while (((Get-Date) - $t0).TotalSeconds -lt 12) {
@@ -40,7 +38,6 @@ $p | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue
 W "=== acltest output ==="
 if (Test-Path $aclOut) { Get-Content $aclOut | ForEach-Object { Write-Host $_ } }
 
-# 清理：只清本任务样本（路径限定在原样本目录）
 $mine = Get-CimInstance Win32_Process -Filter "Name LIKE 'KeySteam%'" -ErrorAction SilentlyContinue |
         Where-Object { $_.ExecutablePath -like 'D:\03_Work\03_Develop\KeySteam v2.99\*' -and
                        $_.ExecutablePath -notlike '*\_re\probe\*' }

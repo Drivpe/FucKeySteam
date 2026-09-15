@@ -271,7 +271,7 @@ asetWindowFlag  aQt  aWindowType  aWindowContextHelpButtonHint
 
 ### 1.6 代价
 
-不适用于「进程外抑制」，因为不可行。若走**进程内注入**（DLL 注入后直接操作 `QApplicationPrivate`）：需要管理员权限 + 需要解除符号修饰、且 `QApplicationPrivate` 是 Qt 私有 API（`qt6widgets.dll` 导出表中未见该类符号，且该 DLL 是运行期 `LoadLibrary` 加载，不在静态导入表里）；更关键的是会**直接撞上 `RuntimeGuard` 的模块扫描**（`src.security.runtime_guard`，`0x89788e`，`_KNOWN_HOOK_FILE_NAMES` / `_has_hard_injection` / `_kill_main_process`）。**这属于改样本，不是抑制。**
+不适用于「进程外抑制」，因为不可行。若走**进程内注入**（DLL 注入后直接操作 `QApplicationPrivate`）：需要管理员权限 + 需要解除符号修饰、且 `QApplicationPrivate` 是 Qt 私有 API（`qt6widgets.dll` 导出表中未见该类符号，且该 DLL 是运行期 `LoadLibrary` 加载，不在静态导入表里）；此外会面对 `RuntimeGuard` 的注入扫描（`src.security.runtime_guard`，`0x89788e`，`_KNOWN_HOOK_FILE_NAMES` / `_has_hard_injection` / `_kill_main_process`）——**但该扫描有明确豁免，见 §2.2 的限定条件，不宜笼统断言「必被发现」**。**这属于改样本，不是抑制。** 注入路径的实测结论见 `docs/probe-injection.md`。
 
 ---
 
@@ -304,6 +304,19 @@ asetWindowFlag  aQt  aWindowType  aWindowContextHelpButtonHint
 
 - `WH_CBT` 要拦截**目标进程**创建的窗口，hook 过程必须在该进程内执行 —— Windows 只在 `SetWindowsHookEx` 的 **hook procedure 位于 DLL 中**时才把它注入其它进程（对 `WH_CBT` 等非 `WH_KEYBOARD_LL`/`WH_MOUSE_LL` 类型）。这意味着必须构造注入 DLL、需要管理员权限、并且 `SetWindowsHookExW` 在**整个 payload 中零命中**说明样本自身不做这事。
 - 即使成功注入，也会撞上 `RuntimeGuard`：`src.security.runtime_guard` 明确实现「注入扫描」（`_KNOWN_HOOK_FILE_NAMES`、`runtime_injected_module_message`、`_has_hard_injection`），发现可疑模块**直接 `_kill_main_process`**。相关字符串在 `0x896bd0`（`suspicious_modules_for` / `runtime_injected_module_message` / `_trigger_tamper` / `_request_watchdog_kill` / `_kill_main_process`）。
+
+  **限定条件（2026-09-16 补，来自 `_has_hard_injection` 的明文 docstring）**：该扫描**不是无差别触发**。`0x896c5d` 处的 docstring 原文为：
+
+  > `Only definite injection features (hook DLL / abnormal exe mapping).`
+  > `DLLs under user-writable or temp directories are often loaded by legitimate software such as IMEs; killing on those would crash normal users (e.g. after clicking the captcha input). A failed scan must not be treated as injection either.`
+
+  即存在两条明确的豁免：
+  1. **只对「确定的注入特征」动作**（hook DLL / 异常的 exe 映射）——临时目录、用户可写目录下的 DLL 属**已知的误报来源**，因为输入法等正常软件也会加载它们，杀它会导致正常用户崩溃；
+  2. **扫描失败不得当作注入**。
+
+  因此「注入必被发现」这一说法**过强**。准确的表述是：**若注入留下「确定的注入特征」，会被检测并 `_kill_main_process`**；
+  哪些特征算「确定」、`temp_rule` / `strict` 的默认值，仍**未取得代码级证据**（本报告 §6 已列为未确证）。
+  **注入探针的实测结果见 `docs/probe-injection.md`。**
 - 而 `HCBT_CREATEWND` 的拦截时机是**窗口创建时**。Qt 创建 `QWidgetWindow` 是 `create()` 路径，此时窗口尚未可见，但 `setModal(True)` 已经或即将生效 —— 更根本的问题是：阻止窗口创建等于**让弹窗不存在**，可这必然打断样本自己的启动序列（`_handle_verification_config_ready` / `_failed` 期望弹窗对象存在），属改样本行为。
 
 ### 2.2 代价汇总
