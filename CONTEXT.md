@@ -13,6 +13,12 @@
 号商发放的每日凭据，用户手工输入。它**不是票据**，是票据的**上游**。提交后由服务端换发一张票据。
 → 不要与「票据」「AppTicket」混用。三者分属三个不同的发放方。
 
+**一票管一天 / daily ticket validity**
+票据有效期由**服务端**按天设定：当日提交验证码后，当日内的启动不再弹窗。
+→ 这是本方案的成本模型：**每天一次人工输入**。
+→ 注意区分来源：「一天」是**用户对服务端设定的陈述**，不是本地观测结果。
+  本地证据只能显示当日内有效，对有效期长度无分辨力。
+
 **票据 / ticket / KV1**
 `key.steamofl.com` 签发的凭据，缓存于 `%APPDATA%\Shikieiki\verification.cache`。
 结构为 `KV1` 魔数 + `purpose` + `code_hash` + `published_at` + `expires_at` + `signature`，
