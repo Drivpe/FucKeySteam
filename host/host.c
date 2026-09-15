@@ -103,110 +103,6 @@ static void strip_trailing_sep(wchar_t *dir)
 }
 
 /* ------------------------------------------------------------------ */
-/* Environment block -> wchar_t** array                                */
-/* ------------------------------------------------------------------ */
-
-/* Duplicate the current process environment into a heap wchar_t** array
- * so we can append/override entries.
- *
- * The block returned by GetEnvironmentStringsW is a run of
- * NAME=VALUE\0 strings terminated by one extra \0. Callers must release
- * it with FreeEnvironmentStringsW, *not* free().
- *
- * On success *out_count receives the number of non-NULL entries (the
- * array itself is NULL-terminated, so its allocation is count+1 slots).
- * Returns NULL on failure with the array left unallocated. */
-static wchar_t **dup_env_block(size_t *out_count)
-{
-    LPWCH block = GetEnvironmentStringsW();
-    if (!block) {
-        *out_count = 0;
-        return NULL;
-    }
-
-    /* Pass 1: count entries. Skip the odd "=C:=C:\..." pseudo-variables,
-     * which are legal to carry through but carry no useful meaning for
-     * a Python child; dropping them avoids surprises in os.environ. */
-    size_t count = 0;
-    for (LPWCH p = block; *p; p += wcslen(p) + 1) {
-        if (*p != L'=')
-            count++;
-    }
-
-    /* count entries + trailing NULL. */
-    wchar_t **env = (wchar_t **)calloc(count + 1, sizeof(wchar_t *));
-    if (!env) {
-        FreeEnvironmentStringsW(block);
-        *out_count = 0;
-        return NULL;
-    }
-
-    /* Pass 2: copy each string. */
-    size_t i = 0;
-    for (LPWCH p = block; *p; p += wcslen(p) + 1) {
-        if (*p == L'=')
-            continue;
-        size_t len = wcslen(p);
-        wchar_t *s = (wchar_t *)malloc((len + 1) * sizeof(wchar_t));
-        if (!s) {
-            for (size_t k = 0; k < i; k++)
-                free(env[k]);
-            free(env);
-            FreeEnvironmentStringsW(block);
-            *out_count = 0;
-            return NULL;
-        }
-        memcpy(s, p, (len + 1) * sizeof(wchar_t));
-        env[i++] = s;
-    }
-    env[i] = NULL;
-
-    FreeEnvironmentStringsW(block);
-    *out_count = i;
-    return env;
-}
-
-/* Append (or override) NAME=VALUE in a NULL-terminated wchar_t** array.
- * Returns a newly allocated array; the caller frees the array and the
- * strings. On failure returns NULL and leaves *array untouched. */
-static wchar_t **env_set(wchar_t **array, size_t count,
-                         const wchar_t *name, const wchar_t *value)
-{
-    size_t name_len = wcslen(name);
-    size_t value_len = wcslen(value);
-
-    wchar_t **out = (wchar_t **)calloc(count + 2, sizeof(wchar_t *));
-    if (!out)
-        return NULL;
-
-    size_t out_n = 0;
-    for (size_t i = 0; i < count; i++) {
-        const wchar_t *e = array[i];
-        /* Override: drop any existing entry with this name. */
-        if (wcsncmp(e, name, name_len) == 0 && e[name_len] == L'=')
-            continue;
-        out[out_n++] = _wcsdup(e);
-    }
-
-    /* Build NAME=VALUE. */
-    size_t total = name_len + 1 + value_len;
-    wchar_t *pair = (wchar_t *)malloc((total + 1) * sizeof(wchar_t));
-    if (!pair) {
-        for (size_t k = 0; k < out_n; k++)
-            free(out[k]);
-        free(out);
-        return NULL;
-    }
-    memcpy(pair, name, name_len * sizeof(wchar_t));
-    pair[name_len] = L'=';
-    memcpy(pair + name_len + 1, value, (value_len + 1) * sizeof(wchar_t));
-
-    out[out_n++] = pair;
-    out[out_n] = NULL;
-    return out;
-}
-
-/* ------------------------------------------------------------------ */
 /* Direction derivation                                                */
 /* ------------------------------------------------------------------ */
 
@@ -257,6 +153,8 @@ int wmain(int argc, wchar_t **argv_in)
                      L"usage: host.exe --dll <path\\to\\main.dll> "
                      L"[--no-envp] [args...]\n"
                      L"  --no-envp   pass NULL as run_code's third argument\n"
+                     L"              (control run; the third argument is main.dll's path,\n"
+                     L"               not an environment block)\n"
                      L"  args...     forwarded to run_code after argv[0]\n");
             return 0;
         } else {
@@ -299,9 +197,9 @@ int wmain(int argc, wchar_t **argv_in)
     }
 
     fwprintf(stderr, L"[host] dll      = %ls\n", dll_path);
-    fwprintf(stderr, L"[host] payloadd = %ls\n", dir);
-    fwprintf(stderr, L"[host] envp     = %ls\n",
-             use_envp ? L"full (3 args)" : L"NULL (2 args, --no-envp)");
+    fwprintf(stderr, L"[host] payload  = %ls\n", dir);
+    fwprintf(stderr, L"[host] 3rd arg  = %ls\n",
+             use_envp ? L"main.dll path" : L"NULL (control run)");
 
     /* ---- Load the module ------------------------------------------- *
      *
@@ -356,7 +254,30 @@ int wmain(int argc, wchar_t **argv_in)
 
     /* ---- Resolve the entry point ----------------------------------- */
 
-    typedef int (*run_code_fn)(int, wchar_t **, wchar_t **);
+    /* The third parameter is NOT an environment block. It is the
+     * absolute path of main.dll, passed as a single NUL-terminated wide
+     * string; the callee stores the pointer in a global
+     * (_pseudo_dll_filename) and later copies it out character by
+     * character.
+     *
+     * Evidence:
+     *   - Nuitka's OnefileBootstrap.c declares the pointer as
+     *     int(__stdcall *)(int, wchar_t **, wchar_t const *) and calls
+     *     it as run_code(argc, argv, dll_filename).
+     *   - MainProgram.c receives it as filename_char_t const * and does
+     *     `if (dll_filename != NULL) setDllFilename(dll_filename);`.
+     *   - The compiled setDllFilename is two instructions
+     *     (mov [rip+...],rcx / ret) -- it stores the pointer, nothing more.
+     *   - The consumer copies with
+     *         movzx eax, WORD PTR [rcx] / mov WORD PTR [rdx],ax
+     *     stepping 2 bytes at a time and stopping at a single NUL. One
+     *     level of indirection only -- a pointer array would need two.
+     *
+     * Passing an environment array here (as an earlier revision of this
+     * file did) means the callee reads the array's first slot as if it
+     * were character data. That does not crash; it silently yields a
+     * garbage path. Pass the DLL path. */
+    typedef int (*run_code_fn)(int, wchar_t **, const wchar_t *);
 
     run_code_fn run_code = (run_code_fn)(void *)GetProcAddress(mod, "run_code");
     if (!run_code) {
@@ -423,49 +344,61 @@ int wmain(int argc, wchar_t **argv_in)
     for (int i = 0; i < ci; i++)
         fwprintf(stderr, L"[host]   argv[%d] = %ls\n", i, child_argv[i]);
 
-    /* ---- Build envp ------------------------------------------------ *
+    /* ---- Environment variables ------------------------------------- *
      *
-     * Two variables, matching the outer KeySteam.exe:
+     * These go into the PROCESS environment, not into run_code's third
+     * parameter -- that parameter carries the DLL path (see above).
      *
-     *   NUITKA_ONEFILE_DIRECTORY = fully qualified payload directory
-     *   NUITKA_ORIGINAL_ARGV0    = the original argv[0]
-     */
-    wchar_t **child_env = NULL;
-
+     *   NUITKA_ONEFILE_DIRECTORY = directory containing the HOST
+     *       executable. Nuitka sets this to
+     *       stripBaseFilename(getBinaryFilenameWideChars(false)), which
+     *       is the binary's own directory -- not the payload directory.
+     *
+     *   NUITKA_ORIGINAL_ARGV0    = value for __compiled__.original_argv0.
+     *       Optional: if unset, Nuitka falls back to the argv[0] we pass.
+     *       Set it to make original_argv0 name the host rather than the
+     *       script path we hand to argv[0].
+     *
+     * Both are opt-out via --no-envp for the control run. */
     if (use_envp) {
-        size_t env_count = 0;
-        wchar_t **base = dup_env_block(&env_count);
-        if (!base) {
-            fail(L"GetEnvironmentStringsW");
-            return 5;
+        wchar_t self[MAX_PATH];
+        DWORD n = GetModuleFileNameW(NULL, self, MAX_PATH);
+        wchar_t *host_dir = (n && n < MAX_PATH) ? dir_of(self) : NULL;
+
+        if (host_dir) {
+            strip_trailing_sep(host_dir);
+            if (!SetEnvironmentVariableW(ENV_DIRECTORY, host_dir))
+                fail(L"SetEnvironmentVariableW(NUITKA_ONEFILE_DIRECTORY)");
+            fwprintf(stderr, L"[host]   %ls=%ls\n", ENV_DIRECTORY, host_dir);
+            free(host_dir);
+        } else {
+            fwprintf(stderr, L"[host] WARN: could not determine host "
+                             L"directory; %ls unset\n", ENV_DIRECTORY);
         }
 
-        wchar_t **e1 = env_set(base, env_count, ENV_DIRECTORY, dir);
-        if (!e1) {
-            fwprintf(stderr, L"[host] FATAL: out of memory (envp)\n");
-            return 5;
-        }
-
-        wchar_t **e2 = env_set(e1, env_count + 1, ENV_ARGV0, argv0);
-        if (!e2) {
-            fwprintf(stderr, L"[host] FATAL: out of memory (envp)\n");
-            return 5;
-        }
-
-        child_env = e2;
-        fwprintf(stderr, L"[host]   %ls=%ls\n", ENV_DIRECTORY, dir);
-        fwprintf(stderr, L"[host]   %ls=%ls\n", ENV_ARGV0, argv0);
+        if (!SetEnvironmentVariableW(ENV_ARGV0, child_argv[0]))
+            fail(L"SetEnvironmentVariableW(NUITKA_ORIGINAL_ARGV0)");
+        fwprintf(stderr, L"[host]   %ls=%ls\n", ENV_ARGV0, child_argv[0]);
     }
 
     /* ---- Invoke ---------------------------------------------------- *
      *
+     * The third argument is the absolute path to main.dll. Passing NULL
+     * instead (--no-envp) does not crash: the callee skips
+     * setDllFilename and _pseudo_dll_filename stays NULL, so
+     * getBinaryFilenameWideChars falls through to
+     * GetModuleFileNameW(NULL, ...) and reports main.dll's own path.
+     * That is a valid control run for isolating the parameter's effect.
+     *
      * Do NOT run this against a real target outside an isolated VM.
      */
-    fwprintf(stderr, L"[host] calling run_code(argc=%d, argv=%p, envp=%ls)\n",
-             ci, (void *)child_argv, use_envp ? L"<array>" : L"NULL");
+    const wchar_t *third = use_envp ? dll_path : NULL;
+
+    fwprintf(stderr, L"[host] calling run_code(argc=%d, argv=%p, dll=%ls)\n",
+             ci, (void *)child_argv, third ? third : L"NULL");
     fflush(stderr);
 
-    status = run_code(ci, child_argv, child_env);
+    status = run_code(ci, child_argv, third);
 
     fwprintf(stderr, L"[host] run_code returned %d\n", status);
 

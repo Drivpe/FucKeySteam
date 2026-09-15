@@ -1,6 +1,6 @@
 # 运行方案（ticket #3 的实测部分）
 
-**状态**：待 `envp` 格式核实完成后执行。本文是执行清单，不是执行结果。
+**状态**：前置条件已满足，可执行。本文是执行清单，不是执行结果。
 
 ---
 
@@ -8,7 +8,8 @@
 
 **必须全部满足才开跑：**
 
-- [ ] `envp` 的真实格式已核实（是 `NAME=VALUE\0` 扁平块，还是 `wchar_t**` 指针数组）。若为扁平块，`host.c` 的 `dup_env_block` 需先改。**在此之前不要运行。**
+- [x] 第三参数的真实语义已核实：**它不是环境块**，是 `main.dll` 的绝对路径宽字符串。`host.c` 已按此重写并重新编译通过。
+      （早先按环境数组实现的版本已废弃——那个错误不会崩溃，只会静默产出垃圾路径。）
 - [ ] 运行环境已确认为隔离环境。样本会读写 Steam 目录、伪造 AppTicket/ETicket、经 `curl_cffi` 做 TLS 指纹伪装、用 `psutil`/`_wmi` 采集进程与系统信息。
 - [ ] `host/host.exe` 已构建（`bash host/build.sh`）。
 - [ ] 监控脚本已就位：`_re/monitor_keysteam.ps1`。
@@ -115,9 +116,9 @@ cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shik
 |---|---|---|
 | `verification.cache` | 存在（2026-09-13 20:26，605 B） | 移除 |
 | `first_run.cache` | 存在（2026-09-12 13:49，63 B） | 不变（首运行弹窗应不出现，这是范围边界） |
-| `--no-envp` | 不用（完整 envp） | 不用 |
+| `--no-envp` | 不用（传 `main.dll` 路径） | 不用 |
 
-两次都用完整 `envp`。`--no-enpv` 的 NULL 变体留到两次都跑通后再做——它是**对照组**，价值在于回答「envp 是否必需」，而不是回答「argv 方案是否成立」。在没有基线的情况下跑对照组没有判读意义。
+两次都传 `main.dll` 的绝对路径作为第三参数。`--no-envp` 的 NULL 变体留到两次都跑通后再做——它是**对照组**，价值在于回答「第三参数传 NULL 时行为如何不同」，而不是回答「argv 方案是否成立」。在没有基线的情况下跑对照组没有判读意义。
 
 ---
 
@@ -170,7 +171,7 @@ cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shik
 
 - `LoadLibraryExW` 是否真的成功
 - `GetProcAddress` 是否真的返回非 NULL
-- `envp` 的格式是否被正确消费
+- 第三参数（`main.dll` 路径）是否被正确消费
 - `argv[0]` 的 `.py` 后缀是否真的触发源码运行分支
 - 两个「已知阻碍」在原生宿主下是否消失
 

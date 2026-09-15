@@ -80,7 +80,7 @@ programs: =D:/03_Work/03_Develop/keysteam-unlock-spike/../libexec/gcc/x86_64-w64
 ## 2. `run_code` 签名：三参数
 
 ```c
-int run_code(int argc, wchar_t **argv, wchar_t **envp);
+int run_code(int argc, wchar_t **argv, const wchar_t *dll_filename);
 ```
 
 **证据一——`main.dll` 入口反汇编**（RVA `0x143b380`，ImageBase `0x180000000`）：
@@ -90,7 +90,7 @@ int run_code(int argc, wchar_t **argv, wchar_t **envp);
 0x180143b384: mov  eax,ecx        ; arg1 -> argc 使用
 0x180143b386: test r8,r8          ; arg3 判空
 0x180143b389: je   +8
-0x180143b38e: call 0x18014135e0   ; 处理 arg3 = envp
+0x180143b38e: call 0x18014135e0   ; setDllFilename(arg3)
 0x180143b395: call 0x180143a430
 ```
 
@@ -108,10 +108,10 @@ x64 调用约定：`rcx`=arg1、`rdx`=arg2、`r8`=arg3。三个寄存器都被�
 0xbfed: lea  rdx,[0x141d55a50]   ; "run_code"
 0xbff4: mov  rcx,rax
 0xbff7: call [IAT 0x240c8]       ; GetProcAddress
-0xc006: lea  r8,[0x141d5d720]    ; arg3 = envp
+0xc006: lea  r8,[0x141d5d720]    ; arg3 = main.dll 路径
 0xc00d: mov  rdx,r13             ; arg2 = argv
 0xc010: mov  ecx,r12d            ; arg1 = argc
-0xc013: call rax                 ; run_code(argc, argv, envp)
+0xc013: call rax                 ; run_code(argc, argv, dll_path)
 ```
 
 三寄存器齐填后才 `call`。参数**必须是宽字符** `wchar_t**`（UTF-16LE），不是 `char**`。
@@ -126,9 +126,9 @@ typedef wchar_t native_command_line_argument_t;
 typedef int(__stdcall *nuitka_dll_function_ptr)(int, native_command_line_argument_t **);
 ```
 
-它只填 `rcx`/`rdx`，`r8` 未设。在 x64 调用约定下 `r8` 读到调用者栈上的残留值，而入口的 `test r8,r8; je +8` 在 `r8==0` 时恰好跳过 envp 处理——**这是踩了运气，不是正确调用**。
+它只填 `rcx`/`rdx`，`r8` 未设。在 x64 调用约定下 `r8` 读到调用者栈上的残留值，而入口的 `test r8,r8; je +8` 在 `r8==0` 时恰好跳过 `setDllFilename`——**这是踩了运气，不是正确调用**。
 
-后果：`boot.c` 路线会静默丢掉 `envp` 注入。而实测字符串证据显示 `NUITKA_ONEFILE_DIRECTORY` / `NUITKA_ONEFILE_TEMP` 正是经此途径传递（见下节）。丢掉它们的行为未经检验。
+后果：`boot.c` 路线**静默丢掉 `main.dll` 的路径**。该路径决定 `getBinaryFilenameWideChars` 的返回值（进而是资源搜索基准与 `original_argv0` 的派生路径）：传 NULL 时程序回落到 `GetModuleFileNameW(NULL,...)`，报告的是 `main.dll` 自身而非宿主。`boot.c` 在这种状态下靠的是栈残留恰好为 0。
 
 ---
 
@@ -179,20 +179,98 @@ typedef int(__stdcall *nuitka_dll_function_ptr)(int, native_command_line_argumen
 
 ---
 
-## 5. `envp` 的内容
+## 5. 第三参数不是环境块，是 `main.dll` 的路径
 
-第三个参数**不可省略**。
+**本节是对先前错误结论的更正。** 本文档早先版本把第三参数当作环境块，据此给出了一套环境数组构造方案，并让 `host.c` 照此实现。**那个实现是错的。**
 
-需要包含的变量（外层 `KeySteam.exe` 用 `SetEnvironmentVariableW` 写入，两字符串在文件中相邻）：
+第三参数的类型是 `filename_char_t const *`（Windows 即 `wchar_t const *`），内容是**被加载的 `main.dll` 的绝对路径**，形式是**单个以 NUL 结尾的宽字符串**。
 
-| 变量 | 文件偏移 | 值 |
-|---|---|---|
-| `NUITKA_ONEFILE_DIRECTORY` | `0x1d54d10` | payload 目录全限定路径 |
-| `NUITKA_ORIGINAL_ARGV0` | `0x1d54d30` | 原始 `argv[0]` |
+### 源码依据
 
-构造方式：取当前进程环境块（`GetEnvironmentStringsW`），转为 `wchar_t**` 数组后追加/覆盖上述两项，末尾补 NULL。
+```c
+// OnefileBootstrap.c:930-976，runPythonCodeDLL
+typedef int(__stdcall * nuitka_dll_function_ptr)(int, wchar_t **, wchar_t const *);
+return (*nuitka_dll_function)(argc, argv, dll_filename);   // 第 956 行
+```
 
-**待查证**（子代理进行中）：`envp` 究竟是 `NAME=VALUE\0` 扁平块还是 `wchar_t**` 指针数组。反汇编显示外层把同一个缓冲 `0x141d5d720` 既用于 `lpFileName` 又作为第三参数传出，这一细节需要澄清。**在此之前不要假定格式**——`host.c` 应把该构造隔离在单独函数里，便于两种格式切换。
+```c
+// MainProgram.c:2396-2403，接收方
+NUITKA_DLL_FUNCTION int run_code(int argc, native_command_line_argument_t **argv,
+                                 filename_char_t const *dll_filename) {
+    if (dll_filename != NULL) { setDllFilename(dll_filename); }
+    return Nuitka_Main(argc, argv);
+}
+```
+
+`setDllFilename` 的完整实现（`HelpersFilesystemPaths.c:48`）只有一行赋值：`_pseudo_dll_filename = filename;`
+
+### 反汇编依据（本机实测）
+
+`setDllFilename` @ `0x1814135e0` —— **整个函数两条指令**：
+
+```
+48 89 0d c9 74 9d 00    mov [rip+0x9d74c9],rcx   ; _pseudo_dll_filename = rcx
+c3                      ret
+```
+
+消费点 @ `0x1814137ae`（属 `getBinaryFilenameWideChars`）的复制循环：
+
+```
+48 8b 0d ...            mov   rcx,[rip+...]      ; rcx = _pseudo_dll_filename
+66 83 39 00             cmp   WORD PTR [rcx],0    ; 单个 wchar 是否为 NUL
+0f b7 01                movzx eax,WORD PTR [rcx]  ; 读一个 wchar
+66 89 02                mov   WORD PTR [rdx],ax   ; 写一个 wchar
+48 83 c1 02             add   rcx,0x2             ; 步进 2 字节
+```
+
+**只有一层解引用，按 wchar 线性遍历到单个 NUL 终止。**
+
+- 若第三参数是 `wchar_t**` 指针数组，必须出现**两层**解引用（先取数组元素，再读字符串字符）。
+- 若是 `NAME=VALUE\0` 扁平环境块，必须出现 `=` 分隔符处理或双 NUL 块尾判定。
+
+**实测两者皆无。**
+
+### 为什么这个错误很危险
+
+把环境数组传给这个参数**不会崩溃**。`setDllFilename` 只是保存指针；消费点会把数组的首个槽当作字符数据读取——首个槽是别的指针值，于是被逐字节解释成"路径"，直到撞上某个 NUL。
+
+结果是 `_pseudo_dll_filename` 指向垃圾路径，`getBinaryFilenameWideChars` 返回乱码，程序的路径推导全错，**但进程照常运行、不报错**。这是最难发现的一类失败。
+
+### 正确用法
+
+```c
+AddDllDirectory(payload_dir);
+HINSTANCE h = LoadLibraryExW(main_dll_path, NULL,
+    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32
+  | LOAD_LIBRARY_SEARCH_USER_DIRS);
+int (*run_code)(int, wchar_t **, const wchar_t *) =
+    (void *)GetProcAddress(h, "run_code");
+run_code(argc, argv, main_dll_path);   /* 第三参数 = main.dll 绝对路径 */
+```
+
+### 传 NULL 的行为
+
+有显式处理，不是未定义行为。`if (dll_filename != NULL)` 被跳过，`_pseudo_dll_filename` 保持 NULL，`getBinaryFilenameWideChars` 回落到 `GetModuleFileNameW(NULL, ...)`（反汇编 `0x1814137c0: je 0x1814137f8` 即此分支），取**当前模块 `main.dll` 自身**的路径。
+
+不崩，但 `__compiled__.original_argv0` 及派生路径会指向 `main.dll` 而非宿主。这是 `--no-envp` 开关的对照条件。
+
+---
+
+## 5b. 环境变量（经进程环境传递，与本参数无关）
+
+| 变量 | 语义 | 来源 | 必需性 |
+|---|---|---|---|
+| `NUITKA_ONEFILE_DIRECTORY` | **宿主二进制所在目录**，不是解包目录 | `OnefileBootstrap.c:1357`：`setEnvironmentVariable("NUITKA_ONEFILE_DIRECTORY", stripBaseFilename(binary_filename))` | 由引导器设置 |
+| `NUITKA_ORIGINAL_ARGV0` | `__compiled__.original_argv0` 的取值 | `OnefileBootstrap.c:1359` | **可选**，不设则回落为传入的 `argv[0]` |
+| `NUITKA_ONEFILE_TEMP` | **不是 Nuitka 变量** | 官方源码零命中 | 与 Nuitka 无关 |
+
+**`NUITKA_ONEFILE_TEMP` 的更正**：`main.dll` 中该串有 3 处命中（`0x1cd1b15`、`0x1cd1fb0`、`0x1cf4efb`），但全部是 **KeySteam 应用自己代码里的标识符**——三处上下文均与 `_MAIN_TEMP_ENV_NAME`、`aenviron`、`subprocess` env dict、`--watchdog` 相邻。Nuitka 官方无此运行时变量；真实存在的是编译期宏 `_NUITKA_ONEFILE_TEMP_BOOL` / `_NUITKA_ONEFILE_TEMP_SPEC`（解包目录模板，编译期已固化）。
+
+解包目录**从不以环境变量外传**，只经第三参数把 `main.dll` 路径递进 DLL。
+
+**`NUITKA_ORIGINAL_ARGV0` 不设的后果**（`MainProgram.c:1790-1816`）：环境变量不存在则不进 `if` 分支，随后 `original_argv0 = argv[0];` 兜底。不报错，不为 None。`getOriginalArgv0()` 里的 `assert` 在该赋值之后恒真，不构成风险；Windows 也不走 `NEEDS_ORIGINAL_ARGV0` 断言分支。
+
+**设置它的唯一理由**：让 `original_argv0` 指向宿主而非我们交给 `argv[0]` 的脚本路径。
 
 ---
 
@@ -233,7 +311,7 @@ LoadLibraryExW(dll_filename, NULL,
 
 ## 8. 两个变体
 
-`host.c` 提供开关（如 `--no-envp`）以传 `NULL` 作为第三参数，默认走完整 `envp`。（决策 Q13：两种都试）
+`host.c` 提供开关 `--no-envp` 以传 `NULL` 作为第三参数，默认传 `main.dll` 的绝对路径。（决策 Q13：两种都试）
 
 ---
 

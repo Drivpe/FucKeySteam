@@ -4,7 +4,7 @@ Loads `main.dll`, resolves the `run_code` export, and invokes it with
 **three** arguments:
 
 ```c
-int run_code(int argc, wchar_t **argv, wchar_t **envp);
+int run_code(int argc, wchar_t **argv, const wchar_t *dll_filename);
 ```
 
 Compiling is the whole job here. Nothing in this directory executes the
@@ -161,16 +161,27 @@ reliable. Prefer `build.sh`.
 
 ## What the host does
 
-**Three-argument call.** The common
-`nuitka-dll-bootloader/boot.c` two-argument form `(int, wchar_t**)`
-appears to work only because the x64 Microsoft ABI leaves `r8` holding a
-stale stack value; the callee's `test r8, r8` then happens to skip the
-envp branch and the envp injection is silently dropped. This host always
-supplies `r8`.
+**Three-argument call, and the third argument is NOT an environment
+block.** Its type is `filename_char_t const *` (`const wchar_t *` on
+Windows): a single NUL-terminated wide string holding the absolute path
+of `main.dll`. Nuitka's `MainProgram.c` receives it as
+`filename_char_t const *dll_filename` and does
+`if (dll_filename != NULL) setDllFilename(dll_filename);`. The compiled
+`setDllFilename` is two instructions — store the pointer, return. Its
+consumer copies out characters with
+`movzx eax, WORD PTR [rcx]` / `mov WORD PTR [rdx], ax`, stepping two
+bytes at a time and stopping at one NUL: **one level of indirection
+only.** A pointer array would need two; an environment block would need
+`=` or double-NUL scanning. Neither appears.
 
-**Wide characters throughout.** `argv` and `envp` are `wchar_t**`
-(UTF-16LE), never `char**`. Built with `-municode` so the entry point is
-`wmain` and the CRT hands us a wide `argv`.
+This matters because the mistake is silent. Passing an environment array
+here does not crash — the callee stores the array's first slot and later
+reads it as character data, producing a garbage path while the process
+runs normally. An earlier revision of this file did exactly that.
+
+**`argv` is `wchar_t**`, the third argument is `const wchar_t *`.**
+Never `char**`; never `wchar_t**` for the third. Built with `-municode`
+so the entry point is `wmain` and the CRT hands us a wide `argv`.
 
 **`argv[0]` ends in `.py`.** This is load-bearing, not cosmetic. The
 payload strips and casefolds `argv[0]` and compares it against
@@ -178,16 +189,22 @@ payload strips and casefolds `argv[0]` and compares it against
 off the integrity self-check. The default is
 `<payload_dir>\KeySteam.py`. The file does not need to exist on disk.
 
-**`envp` carries two variables**, matching the outer `KeySteam.exe`:
+**Environment variables go into the PROCESS environment**, not into the
+third argument. Two are relevant:
 
-- `NUITKA_ONEFILE_DIRECTORY` = fully qualified payload directory
-- `NUITKA_ORIGINAL_ARGV0` = the original `argv[0]`
+- `NUITKA_ONEFILE_DIRECTORY` — **the directory containing the host
+  executable**, which is what Nuitka itself sets
+  (`stripBaseFilename(binary_filename)`). Not the payload directory.
+- `NUITKA_ORIGINAL_ARGV0` — the value for
+  `__compiled__.original_argv0`. **Optional:** if unset, Nuitka falls
+  back to the `argv[0]` we pass. Set it to make `original_argv0` name
+  the host rather than the script path.
 
-Built by copying `GetEnvironmentStringsW()` into a heap `wchar_t**`
-array and appending/overriding those two entries. The env block is a run
-of `NAME=VALUE\0` strings ended by one extra `\0`; it is released with
-`FreeEnvironmentStringsW`, not `free()`. A trailing NULL terminates the
-array. `=C:=C:\...` pseudo-variables are skipped.
+Set with `SetEnvironmentVariableW`, not through `run_code`'s arguments.
+
+Note `NUITKA_ONEFILE_TEMP` is **not** a Nuitka variable — it has zero
+hits in Nuitka's source. The three occurrences inside `main.dll` are
+KeySteam's own application-level identifiers.
 
 **Dependency resolution.** `main.dll` statically imports
 `python312.dll` plus KERNEL32, VCRUNTIME140 and seven `api-ms-win-crt-*`
@@ -228,7 +245,9 @@ host.exe --dll <path\to\main.dll> [--no-envp] [args...]
   from its parent, and that directory is used for `AddDllDirectory`, for
   `NUITKA_ONEFILE_DIRECTORY`, and as the prefix of `argv[0]`.
 - `--no-envp` — passes `NULL` as `run_code`'s third argument, for the
-  comparison experiment. Default is the full envp.
+  comparison experiment. Default is the `main.dll` path. (The switch
+  name is historical; the argument it drops is the DLL path, not an
+  environment block.)
 - `args...` — forwarded to `run_code` after `argv[0]`. Host-level
   switches are not forwarded.
 - `--help` / `-h` — usage.
@@ -252,7 +271,7 @@ Baseline run, from Windows in the payload directory:
 D:\path\to\keysteam-unlock-spike\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll"
 ```
 
-Comparison run, dropping the envp injection:
+Comparison run, passing NULL instead of the DLL path:
 
 ```cmd
 D:\path\to\keysteam-unlock-spike\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll" --no-envp
@@ -264,7 +283,9 @@ Capture the log, since the host's diagnostics go to stderr:
 ... > run.log 2>&1
 ```
 
-The two runs can be diffed to see what the envp injection changes.
+The two runs can be diffed to see what the third argument changes:
+with `NULL`, `getBinaryFilenameWideChars` falls through to
+`GetModuleFileNameW(NULL, ...)` and reports `main.dll`'s own path.
 
 ---
 
