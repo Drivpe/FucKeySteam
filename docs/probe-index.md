@@ -100,11 +100,40 @@ cp -a "_re/backup/round7-20260916-probe/KeySteam.exe.orig" "D:/03_Work/03_Develo
 同簇含 `src.steam.depotcache_service` / `sync_depotcache_manifests` / `src.steam.file_operations`。
 **是 Steam 更新前的清理，不碰票据。**
 
-### 推论（**属推断，待探针检验**）
+### 推论（**已实测推翻，2026-09-16 00:44**）
 
-综合上述四点，**样本启动路径上没有「自动删票」的代码**。因此票据消失的成因
-**更可能在样本之外**：第三方工具、坚果云同步（`cloud_redirect_sync_path` 指向
-`C:/Users/Hidriver/Nutstore/1/我的坚果云/GameData`）、关机/重启流程机制、或用户手动操作。
+综合上述四点，主会话当时推断：**样本启动路径上没有「自动删票」的代码**，
+票据消失的成因更可能在样本之外。
+
+**该推断被探针实测推翻。** 删票逻辑确实存在于启动路径，只是**不含**
+`expires` / `cleanup` / `purge` 等任何被检索的词——**按关键词检索必然漏掉**。
+
+实测证据（`docs/probe-ticket-deletion.md` §4.1，250ms 分辨率监视）：
+
+```
+00:44:34.151  KeySteam.exe 启动（PID 22264）
+00:44:35.585  EXISTS len=605 sha=B044406C...   ← 最后存在
+00:44:35.851  MISSING                          ← 首次消失
+                    删除窗口 = 启动后 1.434 ~ 1.700 秒
+```
+
+触发链（`MainWindow._check_cached_verification`，`0x86e48d` 常量簇，主会话已独立复现）：
+
+```
+load_verification_ticket (0x86e4bb)
+  → verify_ticket (0x86e4d5)
+  → published_at (0x86e53a) vs current_published_at (0x86e54a)   ← 配对比较
+  → clear_verification_ticket (0x86e560)                          ← 不匹配即删票
+```
+
+**判定基于 `published_at` 与远端当前值的一致性，不涉及本地日期**——
+因此「跨日删票」的假设也被证伪：一张当日有效票在启动时照样被秒删。
+
+**这次错误的方法论教训**（已登记进 drift 表）：
+上面第一节的排查全用**关键词检索**，而删票逻辑用的词是 `published_at` 比较。
+「没搜到」被当成了「不存在」——正是本项目已登记多次的同一错误模式，
+只不过这次犯在**我自己**身上。**对策**：排除性结论必须附「我搜了哪些词」，
+而不是只说「没有」。
 
 ---
 
