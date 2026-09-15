@@ -75,7 +75,11 @@ function W([string]$m) {
     Add-Content -Path $log -Value $line -Encoding UTF8
 }
 
-W "=== 监控开始，时长 ${Seconds}s ==="
+if ($Seconds -lt 0) {
+    W "=== 监控开始，等待宿主模式（-Seconds $Seconds）==="
+} else {
+    W "=== 监控开始，时长 ${Seconds}s ==="
+}
 W "数据目录: $DataDir"
 W "插件目录: $StubDir"
 W "主号目录: $MainAccountDir"
@@ -163,7 +167,31 @@ function Test-Watched([string]$name) {
     return ($script:watchProcs -contains $n) -or ($n -match '^python3\d+$')
 }
 
-for ($i = 0; $i -lt $Seconds; $i++) {
+# --- 等待宿主模式（-Seconds -1）---------------------------------------
+#
+# ★ 2026-09-15 新增：解决人工操作与监控窗口的时序协调问题。
+#   固定轮数的监控要求 operator 在窗口期内敲命令，两次实测都错过。
+#   本模式下监控持续运行直到检测到 host 出现，然后再多跑
+#   $AfterHostRounds 轮后结束——何时启动宿主都不影响观测完整性。
+#
+#   上限 $MaxWaitRounds 轮（默认约 15 分钟）防止无人启动时无限运行。
+$waitMode     = ($Seconds -lt 0)
+$AfterHostRounds = 60      # 宿主出现后再跑多少轮（约 5 秒）
+$MaxWaitRounds   = 12000   # 等待上限（约 15 分钟）
+$hostSeen     = $false
+$hostSeenAt   = 0
+
+if ($waitMode) { W "=== 等待宿主模式：检测到 host 出现后再跑 $AfterHostRounds 轮 ===" }
+
+$i = 0
+while ($true) {
+    if ($waitMode) {
+        if ($hostSeen -and ($i - $hostSeenAt) -ge $AfterHostRounds) { break }
+        if ($i -ge $MaxWaitRounds) { W "WARN: 等待宿主超时（$MaxWaitRounds 轮），未检测到 host"; break }
+    } else {
+        if ($i -ge $Seconds) { break }
+    }
+    $i++
 
     # --- 0. 进程快照（一次全量，供本循环各段复用）---
     #
@@ -184,6 +212,12 @@ for ($i = 0; $i -lt $Seconds; $i++) {
         if (-not $seenProcs.ContainsKey($key)) {
             $seenProcs[$key] = $true
             W "进程出现: PID=$($p.Id) 名称=$($p.ProcessName) 路径=$($p.Path)"
+            # 等待模式下，首次见到 host 即开始收尾倒计时
+            if ($waitMode -and -not $hostSeen -and $p.ProcessName -ieq 'host') {
+                $hostSeen   = $true
+                $hostSeenAt = $i
+                W "=== 检测到 host，将在 $AfterHostRounds 轮后结束监控 ==="
+            }
         }
     }
 
