@@ -28,6 +28,43 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+
+# --- 窗口枚举辅助（user32 EnumWindows）------------------------------
+#
+# 为什么不用 Get-Process 的 MainWindowTitle：它每个进程只报一个主窗口。
+# 验证码弹窗是同一进程内的 Qt 模态对话框，会被整个漏掉（2026-09-15 实测）。
+# 返回每行的字段顺序：pid, hwnd, visible, enabled, class, title
+Add-Type @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public class KsWinEnum {
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc e, IntPtr l);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr h);
+  public static List<string[]> All() {
+    var res = new List<string[]>();
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      var tb = new StringBuilder(512); GetWindowTextW(h, tb, 512);
+      var cb = new StringBuilder(256); GetClassNameW(h, cb, 256);
+      uint pid; GetWindowThreadProcessId(h, out pid);
+      res.Add(new string[] {
+        pid.ToString(), h.ToInt64().ToString("X"),
+        IsWindowVisible(h).ToString(), IsWindowEnabled(h).ToString(),
+        cb.ToString(), tb.ToString()
+      });
+      return true;
+    }, IntPtr.Zero);
+    return res;
+  }
+}
+"@
+
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $log   = Join-Path $LogDir "monitor-$stamp.log"
@@ -225,35 +262,56 @@ for ($i = 0; $i -lt $Seconds; $i++) {
     }
 
     # --- 4. 窗口：弹窗与完整性锁标题 ---
-    # 2026-09-15 修正：判据是「标题为 倒卖可耻 的窗口是否出现」以及
+    # 2026-09-15 修正（第二次）：判据是「标题为 倒卖可耻 的窗口是否出现」以及
     # 验证码弹窗（VerificationDialog）是否出现。原先无条件记录全系统
     # 窗口标题，冒烟测试显示 firefox / Word / 微信 / Notepad 等全部入日志。
     # 改为两级：关键标题无条件记录（命中即重点），其余只在该窗口属于
     # 观察名单进程时才记。
+    #
+    # ★ 2026-09-15 实测缺陷修复：原先用 `Get-Process | MainWindowTitle`，
+    #   它每个进程只报**一个主窗口**。验证码弹窗是同一进程内的 Qt 模态
+    #   对话框，不是主窗口——于是被整个漏掉。
+    #   证据：本轮 12:26 运行时日志只有「KeySteam v2.99」，而用户现场
+    #   确实看到了验证码弹窗并手动关闭；对照上一轮用 EnumWindows 采集的
+    #   window-evidence.txt，同一状态下能同时抓到
+    #   `KeySteam 验证`（Enabled=True，模态激活）与 `KeySteam v2.99`
+    #   （Enabled=False，被禁用）。
+    #   改用 user32 EnumWindows，枚举全部顶层窗口。
     try {
-        Get-Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.MainWindowTitle -ne "" } |
-            ForEach-Object {
-                $t = $_.MainWindowTitle
-                # 关键判据：无条件记录。
-                # 注意 "KeySteam" 这条会命中任何标题含该串的窗口（例如
-                # 浏览器标签页正在显示本项目的讨论）。这是有意偏保守的
-                # 取舍：宁可多报一次误报，也不要漏掉样本的窗口。
-                $critical = ($t -match '倒卖可耻') -or ($t -match 'Verification') -or
-                            ($t -match 'KeySteam') -or ($t -match '验证')
-                $fromWatched = Test-Watched $_.ProcessName
-                if (-not ($critical -or $fromWatched)) { return }
-                $key = "$($_.ProcessName):$t"
-                if (-not $seenWindows.ContainsKey($key)) {
-                    $seenWindows[$key] = $true
-                    if ($critical) {
-                        W "!!! 关键窗口: 进程=$($_.ProcessName) 标题=`"$t`""
-                    } else {
-                        W "窗口: 进程=$($_.ProcessName) 标题=`"$t`""
-                    }
+        foreach ($w in [KsWinEnum]::All()) {
+            $wpid = [int]$w[0]
+            $vis  = $w[2]
+            $en   = $w[3]
+            $cls  = $w[4]
+            $t    = $w[5]
+            if ($t -eq "") { continue }           # 无标题（含 _q_titlebar 等）
+            if ($vis -ne "True") { continue }     # 不可见的不算
+
+            # 关键判据：无条件记录。
+            # 注意 "KeySteam" 这条会命中任何标题含该串的窗口（例如
+            # 浏览器标签页正在显示本项目的讨论）。这是有意偏保守的
+            # 取舍：宁可多报一次误报，也不要漏掉样本的窗口。
+            $critical = ($t -match '倒卖可耻') -or ($t -match 'Verification') -or
+                        ($t -match 'KeySteam') -or ($t -match '验证')
+
+            $pn = "?"
+            $p = Get-Process -Id $wpid -ErrorAction SilentlyContinue
+            if ($p) { $pn = $p.ProcessName }
+            $fromWatched = Test-Watched $pn
+
+            if (-not ($critical -or $fromWatched)) { continue }
+
+            $key = "$wpid|$t|$en"
+            if (-not $seenWindows.ContainsKey($key)) {
+                $seenWindows[$key] = $true
+                if ($critical) {
+                    W "!!! 关键窗口: pid=$wpid 进程=$pn 标题=`"$t`" 类=$cls 可见=$vis 启用=$en"
+                } else {
+                    W "窗口: pid=$wpid 进程=$pn 标题=`"$t`" 类=$cls 可见=$vis 启用=$en"
                 }
             }
-    } catch { }
+        }
+    } catch { W "WARN: 窗口枚举失败: $($_.Exception.Message)" }
 
     # --- 5. 数据目录变化 ---
     if (Test-Path $DataDir) {

@@ -146,6 +146,55 @@ cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shik
   ```
   有输出就先 `Stop-Process -Force`，否则本次观测被污染
 
+### 首次紧循环运行的判读（2026-09-15 12:26）
+
+存档：`.scratch/run-20260915-122635/`（`findings.md` + 原始日志）
+
+配置：全默认（`env:inject  third:dll path`），`-Seconds 60 -TightLoopMs -1`，实际 32 秒跑完 60 轮（约 533 ms/轮）。
+
+```
+12:26:49.239  进程出现: PID=28404 host
+12:26:50.871  关键窗口: host 标题="KeySteam v2.99"                      （+1.63s）
+12:26:51.427  [IP] 目标 IP 连接: Idle -> 162.14.69.140:443  TimeWait   （+2.19s）
+```
+
+**结论：分支 (a) 被排除——目标 IP `162.14.69.140:443` 确实被连接过。**
+
+依据：监控从 `12:26:35` 起持续采样，若该连接早于 host 存在应更早被记；`TimeWait` 在 Windows 上存活约 120 秒（`TcpTimedWaitDelay` 默认），所以它在 `12:26:51` 被看到意味着建立于观测前不久，落在 host 存活期内。
+
+**但 (b) 与 (c) 仍未区分**：日志记录的所有者是 `Idle`（PID 0）。这是 `TimeWait` 的已知行为——连接进入该状态后 `OwningProcess` 不再关联原进程。**无法据此断言是 `host` 建的连。**
+
+### 本轮暴露的两个观测缺陷（已修）
+
+**缺陷 1：弹窗被整个漏掉。**
+
+用户确认验证码弹窗**出现过**并手动关闭，但日志无任何 `验证` 标题窗口。
+
+根因：脚本用 `Get-Process | MainWindowTitle`，**每个进程只报一个主窗口**；验证码弹窗是同进程内的 Qt 模态对话框，不在其中。
+
+对照上一轮 `EnumWindows` 采集的 `window-evidence.txt`，同一状态能同时抓到：
+
+```
+KeySteam 验证      Enabled=True    ← 模态弹窗
+KeySteam v2.99     Enabled=False   ← 主窗口被禁用
+```
+
+**已修**：改用 `user32 EnumWindows`，日志新增 `类` 与 `启用` 字段。
+
+**缺陷 2：`catch { }` 吞掉异常，伪装成「没有数据」。**
+
+修复前窗口段整段抛异常却无提示（`窗口数=0`）。已改为记录 `WARN`。
+
+**教训**：`catch {}` 让字段级错误伪装成「该现象不存在」。与本文档反复出现的错误同源——**缺失被当成了不存在**。
+
+### 下一步（区分 b 与 c）
+
+必须在连接**建立时**捕获，而非 `TimeWait` 残影：
+
+1. 紧循环中记录连接建立事件（`Established` / `SynSent`）——那一刻 `OwningProcess` 仍有效
+2. 目标 IP 检测与通用网络段**分离去重表**（当前共用 `$seenConns`，可能互相遮盖）
+3. `pktmon` / ETW 抓连接建立（需提权）
+
 ### 目的
 
 消除验证码弹窗触发链的三分支歧义——(a) 弹窗不需联网即可触发、(b) 联网发生了但短于采样间隔、(c) 联网走了别的进程。
