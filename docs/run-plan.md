@@ -215,7 +215,7 @@ MainProgram.c:2325   EXECUTE_MAIN_MODULE(...)               ← 用户代码在�
 MainProgram.c:2355   Py_Exit(exit_code)                     ← 进程在此终止
 ```
 
-`run_code` 正常路径**不返回**——`Py_Exit` 直接终结整个进程。所以 `host.c` 末尾的 `return status`（`host.c:438`）与那行 `[host] run_code returned N` 只在**异常路径**可见。看到它，说明出事了，不是说明成功了。
+`run_code` 正常路径**不返回**——`Py_Exit` 直接终结整个进程。所以 `host.c` 末尾的 `return status`（重导：`grep -n 'return status' host/host.c`）与那行 `[host] run_code returned N` 只在**异常路径**可见。看到它，说明出事了，不是说明成功了。
 
 Nuitka 上游源码自己对这件事有明示（`MainProgram.c:2357`，紧接 `Py_Exit(exit_code)` 之后）：
 
@@ -324,13 +324,13 @@ Nuitka 的 C 运行时**没有**任何后缀分支。该判定位于**样本自�
 
 ### `--no-envp` 的真实语义（与 `#4` 的一条归因假设冲突）
 
-`--no-envp` **不是**一个单纯的「第三参数对照组」。看 `host.c:426`：
+`--no-envp` **不是**一个单纯的「第三参数对照组」。看 `host.c` 里第三参数那行（`grep -n 'const wchar_t \*third' host/host.c`）：
 
 ```c
 const wchar_t *third = use_envp ? dll_path : NULL;
 ```
 
-而 `use_envp` 同时还包着 `host.c:394` 那段 `SetEnvironmentVariableW`（`NUITKA_ONEFILE_DIRECTORY` 与 `NUITKA_ORIGINAL_ARGV0`）。所以这个开关**同时关掉两件事**：
+而 `use_envp` 同时还包着 同一函数里紧邻的那段（`grep -n 'if (use_envp)' host/host.c`） `SetEnvironmentVariableW`（`NUITKA_ONEFILE_DIRECTORY` 与 `NUITKA_ORIGINAL_ARGV0`）。所以这个开关**同时关掉两件事**：
 
 1. 第三参数从 `main.dll` 路径变为 `NULL`；
 2. 两个环境变量都不设置。

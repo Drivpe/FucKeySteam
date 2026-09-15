@@ -237,12 +237,22 @@ The host's own failure codes, verified against the source:
 
 | Code | Meaning | Site |
 | --- | --- | --- |
-| `0` | `--help` / `-h` | host.c:185 |
-| `2` | Argument or memory failure (no DLL path, OOM, `GetModuleFileNameW` failed) | host.c:199, 208, 219, 339, 359 |
-| `3` | `LoadLibraryExW(main.dll)` failed — the module or one of its imports could not be resolved | host.c:278 |
-| `4` | `GetProcAddress(main.dll, "run_code")` returned NULL | host.c:317 |
+| `0` | `--help` / `-h` | host.c:192 |
+| `2` | Argument or memory failure (no DLL path, OOM, `GetModuleFileNameW` failed) | host.c:206, 215, 226, 385, 405 |
+| `3` | `LoadLibraryExW(main.dll)` failed — the module or one of its imports could not be resolved | host.c:324 |
+| `4` | `GetProcAddress(main.dll, "run_code")` returned NULL | host.c:363 |
 
-Line numbers are as of the 2026-09-15 revision. They drift whenever the file is edited above them — re-derive with `grep -n 'return [0-9]\|return status' host/host.c` rather than trusting the table.
+**These line numbers have already gone stale twice** — once after the
+`run_code`-third-argument rewrite and again after the
+`LoadLibraryExW`-full-path fix. Do not trust them; re-derive:
+
+```bash
+grep -n 'return [0-9]\|return status' host/host.c
+```
+
+The task's own lesson generalises: this repo has a documented history of
+line-number and position drift, so any citation of a specific line is a
+claim that needs re-checking, not a fact that can be quoted forward.
 
 There is **no** exit code `5`. An earlier handoff document claimed
 `5 = environment variable setting failure`; no such path exists in the

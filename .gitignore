@@ -58,11 +58,15 @@ desktop.ini
 # 子代理诊断残留（临时探针，非交付物）
 .scratch/probe/
 
-# 临时备份（含样本侧插件副本：*.lua / *.ks 不在上面的黑名单里，
-# 必须显式排除，否则会被 git add -A 带进仓库）
+# 临时备份（含样本侧插件副本，必须显式排除，否则会被 git add -A 带进仓库）
+#
+# 教训：本条规则第一版只加了 *.ks，注释却宣称 *.lua 与 *.ks 都已覆盖。
+# 实测 git check-ignore 对 .lua 返回 exit 1（未忽略）。补规则时要两个都测，
+# 不要凭注释判断覆盖范围。
 .scratch/*-backup-*/
 .scratch/backup-*/
 *.ks
+*.lua
 
 # 运行期日志与观测产物（run-plan.md 的两次运行产出：宿主 stdout/stderr、
 # 监控日志、目录快照）。属运行期数据，与本文件开头「运行期缓存留在原地」

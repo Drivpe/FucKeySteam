@@ -22,7 +22,7 @@ cp scripts/monitor_keysteam.ps1 \
 
 Seven things, all read-only:
 
-- Processes whose names are on the watch list (`host`, `keysteam`, `keysteam-runtime-guard`, `guard`, `watchdog`, `kst`, `python3XX`, `steam`)
+- Processes matching `Test-Watched`: exact (case-insensitive) membership in the list `host`, `keysteam`, `keysteam-runtime-guard`, `guard`, `watchdog`, `kst`, `python`, `python312`, `steam` — **or** a `^python3\d+$` regex match, so a versioned interpreter name (`python313`) is caught without listing every version.
 - Named pipes matching `keysteam`
 - TCP connections **from watched processes only** (see below)
 - Window titles — critical patterns unconditionally, others only from watched processes
@@ -34,7 +34,7 @@ Seven things, all read-only:
 
 Both were the same error, and both were live in the previous revision:
 
-- **Substring matching used as exact matching.** The process and network filters used `-like "*$_*"`, so `svchost` and `StartMenuExperienceHost` matched `host`, and `nutstore_watchdog` matched `watchdog`. `host.c:163`'s `wcsstr(..., L".dll")` has the identical flaw. Now: exact comparison against a watch list.
+- **Substring matching used as exact matching.** The process and network filters used `-like "*$_*"`, so `svchost` and `StartMenuExperienceHost` matched `host`, and `nutstore_watchdog` matched `watchdog`. `host.c`'s `wcsstr(argv_in[i], L".dll")` (finder: `grep -n wcsstr host/host.c`) has the identical flaw. Now: exact comparison against a watch list.
 - **Unfiltered enumeration.** Network and window collection swept the whole system, so the log filled with `wegame`, `Nutstore`, `firefox`, `Clash`, `SiYuan` traffic instead of the sample's. Now filtered by process.
 
 The `-match 'KeySteam'` window rule is deliberately broad and will fire on, for example, a browser tab showing this project. That is a conscious trade: a false positive costs one log line, a missed window costs the run.
