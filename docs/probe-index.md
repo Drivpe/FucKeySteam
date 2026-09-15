@@ -161,10 +161,68 @@ PY
 
 ---
 
-## 结果汇总（待三份报告完成后回填）
+## 结果汇总（2026-09-16，三探针全部完成）
 
 | 探针 | 结论 | 文档 |
 | --- | --- | --- |
-| 进程内注入 | 进行中 | `docs/probe-injection.md` |
-| 改样本重打包 | 进行中 | `docs/probe-repack.md` |
-| 票据消失机制 | 进行中 | `docs/probe-ticket-deletion.md` |
+| 进程内注入 | **不能** —— 实际发生的是「注入成功、载荷运行、弹窗行为未变」 | `docs/probe-injection.md`（447 行） |
+| 改样本重打包 | **未能确证**（卡在 zstd 压缩端），但确证了更轻的外部宿主路径 | `docs/probe-repack.md`（406 行） |
+| 票据消失机制 | **删除者已锁定并复现**，阻止方案实测有效 | `docs/probe-ticket-deletion.md`（619 行） |
+
+### 三条结论的要点
+
+**一、进程内注入不可行，且原因是三重独立的**
+
+1. **GUI 进程的定向 DACL**：精确拒绝 `VM_WRITE` / `VM_OPERATION` / `CREATE_THREAD`
+   三个权限（正是 `_INJECTION_ACCESS_MASK` 的三个分量），其余全部放行。
+   并排实测（记事本作同权限对照）排除了「`SeDebugPrivilege` 缺失」这一替代解释——
+   `DebugActiveProcess(notepad)` 成功、对样本失败。150ms 采样证明 **GUI 进程在出现的
+   第一个采样点（0.338s）就已是 E5**，**无时间窗**。
+2. **onefile bootstrap 与 GUI 是不同进程**（**本次最有价值的新事实**）：
+   ```
+   bootstrap  (ppid=explorer)  窗口数=0   VM_WRITE=OK   ← 唯一可写
+    └─ GUI    (ppid=bootstrap) 窗口数=8   VM_WRITE=E5   ← 弹窗在这里
+      └─ 看门狗                 窗口数=0
+   ```
+   抢在 Qt 建窗前注入 bootstrap **成功**了（`LoadLibraryW` 返回非 0、载荷运行），
+   但载荷回报 `dlg_found=0 win_total=0`——**bootstrap 永远看不到 GUI 的窗口**。
+   主会话已独立复现此进程树（PID 6780 → 27316 → 11840，窗口数 0 / 8 / 0）。
+3. **即便打通前两者也不产出可用状态**：弹窗是校验链的**同步分支输出**，
+   关掉它不会让 `verification_cache_accepted`（`0x86d749`）发出，
+   `_continue_initialization`（`0x86d765`）永不被调用。
+   **「弹窗不出现」≠「程序可用」。** ADR 0001 由此加强。
+
+**二、外部宿主是最轻路径（已确证可行）**，且两个「已知阻碍」双双被证伪
+（`GetProcAddress` 返回 0 为假；`pyinit_core_reconfigure` 失败未复现）。
+但**「宿主 + 改过的 DLL」的端到端弹窗消除效果仍未实测**。
+
+**三、票据删除已复现，且可被阻止**
+
+### 顺带澄清的两条
+
+**`RuntimeGuard` 的注入检测实测未触发。** 把名单内的 `minhook.dll` 注入 bootstrap →
+20 秒无任何 kill。结合 `temp_rule` 的**中文 docstring 原文**（`0x8964f1` 附近）：
+
+> ``temp_rule=False`` 时跳过"临时目录加载"判定：**onefile 程序的正规 DLL 全部位于 `%TEMP%` 解压目录**，
+> 无法确认目标进程解压目录时该规则**不可靠**，只保留钩子名/异常 exe 映射等明确注入特征。
+
+**即：对 onefile 形态，临时目录判定显式跳过。** 主会话此前在
+`docs/suppressing-the-dialog.md` 里写「注入会撞上 RuntimeGuard 的模块扫描」是**过强断言**，
+现已改为限定表述（该文两处）。
+
+**onefile 每次启动都在 `%TEMP%` 解包一份完整 payload，且正常退出不清理。**
+实测 23 个残留目录、每个 117 条目 / 103.5 MB —— **合计 2.16 GB**。
+目录名为 `onefile_{PID}_{TIME}_{RANDOM}`。
+这解释了交接文档里「`NUITKA_ONEFILE_DIRECTORY` 持久化」那个悬置问题的**真实形态**：
+不是「能不能持久化」，而是**它本来就不清理**。本轮已清理。
+
+### 环境终检（2026-09-16 01:16）
+
+| 项 | 状态 |
+| --- | --- |
+| `KeySteam` / `KeySteam_probe` / `host` 进程 | 0 / 0 / 0 |
+| `keysteam` 命名管道 | 无残留 |
+| 样本哈希 | `8f6dc310…` **未变** |
+| `config/stplug-in/` | 5 文件（与备份一致） |
+| `userdata/1398488476` | 537 文件（未被写入） |
+| `%TEMP%\onefile_*` | 已清理（释放 2.16 GB） |
