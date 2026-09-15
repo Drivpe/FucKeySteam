@@ -92,3 +92,6 @@ Default five-role vocabulary, unchanged. See `docs/agents/triage-labels.md`.
 ### Domain docs
 
 Single-context, with the glossary living in the behavioural spec inside the workspace rather than a `CONTEXT.md`. See `docs/agents/domain.md`.
+
+That file also carries a **drift register** — a table of claims that were once written down here and later found wrong, with where each lived and what the correct position is. This project has produced seven of them, several in a single day. Check it before reasoning from any older document, and add a row whenever you correct a claim. The related convention: correct an issue by **appending a comment**, then bring the body into line — do not silently rewrite history.
+
