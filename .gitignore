@@ -54,3 +54,6 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 子代理诊断残留（临时探针，非交付物）
+.scratch/probe/
