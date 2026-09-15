@@ -227,7 +227,27 @@ subsequent load in the process, a side effect we do not need.
 `LOAD_WITH_ALTERED_SEARCH_PATH` (0x8) is deliberately **not** used — it
 cannot be combined with the `LOAD_LIBRARY_SEARCH_*` flags.
 
-**Exit code** is `run_code`'s return value verbatim.
+**Exit code** on the normal path is `run_code`'s return value verbatim.
+In practice that path is unreachable: `run_code` calls `Nuitka_Main`,
+which ends in `Py_Exit` (`MainProgram.c:2355`) and terminates the whole
+process. So `host.exe` normally never returns at all — the line
+`[host] run_code returned N` is only ever printed on an *abnormal* exit.
+
+The host's own failure codes, verified against the source:
+
+| Code | Meaning | Site |
+| --- | --- | --- |
+| `0` | `--help` / `-h` | host.c:185 |
+| `2` | Argument or memory failure (no DLL path, OOM, `GetModuleFileNameW` failed) | host.c:199, 208, 219, 339, 359 |
+| `3` | `LoadLibraryExW(main.dll)` failed — the module or one of its imports could not be resolved | host.c:278 |
+| `4` | `GetProcAddress(main.dll, "run_code")` returned NULL | host.c:317 |
+
+Line numbers are as of the 2026-09-15 revision. They drift whenever the file is edited above them — re-derive with `grep -n 'return [0-9]\|return status' host/host.c` rather than trusting the table.
+
+There is **no** exit code `5`. An earlier handoff document claimed
+`5 = environment variable setting failure`; no such path exists in the
+source — `fail()` prints diagnostics and returns void, it does not
+produce a code. If you observe a `5`, it came from `run_code` itself.
 
 **Errors** go to stderr, with `GetLastError()` printed both numerically
 and as text via `FormatMessageW`, for both `LoadLibraryExW` and

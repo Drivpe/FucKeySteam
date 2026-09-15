@@ -5,9 +5,18 @@ Issues and specs for this repo live in [Drivpe/keysteam-unlock-spike](https://gi
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
+- **Read an issue**: use the REST API, **not** `gh issue view`:
+
+  ```
+  gh api repos/Drivpe/keysteam-unlock-spike/issues/<n> --jq '{number,title,state,labels:[.labels[].name],body}'
+  gh api repos/Drivpe/keysteam-unlock-spike/issues/<n>/comments --jq '.[] | {id,created_at,author:.user.login,body}'
+  ```
+
+  **Why not `gh issue view <n> --comments`**: on this machine (gh 2.46.0) that command fails outright — the GraphQL query requests `repository.issue.projectCards`, which GitHub rejects now that Projects (classic) is deprecated. The failure is `exit 1` with no issue content at all, so it looks like a network or auth problem rather than a CLI-version problem. The REST endpoints above return the same data and are version-stable.
+
+- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters. This one works — it uses `--json`, which does not go through the deprecated field.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
+- **Edit an issue body**: `gh api --method PATCH repos/Drivpe/keysteam-unlock-spike/issues/<n> -f body="$(cat file.md)"`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 

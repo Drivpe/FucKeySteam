@@ -49,11 +49,37 @@
 
 /* argv[0] handed to run_code. MUST end in ".py" (case-insensitive).
  *
- * This is the entire mechanism of the host: the module strips and
- * casefolds argv[0] and compares it against (".py", ".pyw") to decide
- * that it is running "from source", which disables the integrity
- * self-check. A .py-suffixed argv[0] is therefore load-bearing, not
- * cosmetic. It does not need to exist on disk. */
+ * This is the entire mechanism of the host: A .py-suffixed argv[0] is
+ * load-bearing, not cosmetic. It does not need to exist on disk.
+ *
+ * WHERE THE SUFFIX CHECK ACTUALLY LIVES (corrected 2026-09-15):
+ *
+ * An earlier revision of this comment said "the module strips and
+ * casefolds argv[0] ... which disables the integrity self-check",
+ * implying the check is part of Nuitka's C runtime. That attribution is
+ * WRONG, and it matters, because it sends a reader looking in the wrong
+ * source tree.
+ *
+ * Measured facts:
+ *   - grep -rn 'pyw\|\.py"' over Nuitka's MainProgram.c,
+ *     OnefileBootstrap.c and HelpersFilesystemPaths.c returns ZERO
+ *     matches. Nuitka's C runtime has no suffix branch at all.
+ *   - OnefileBootstrap.c only ever assigns argv[0] from getBinaryPath()
+ *     (lines 868, 1016, 1359, 1454-1455).
+ *   - run_code forwards argv unchanged to Nuitka_Main
+ *     (MainProgram.c:2396-2403), which overwrites argv[0] from
+ *     getBinaryFilename* and otherwise ignores it.
+ *   - The suffix test lives in the SAMPLE'S OWN compiled Python code,
+ *     which is packed into main.dll. It was found by reading the
+ *     sample's rdata: the constant tuple
+ *         P\x02u.py\0u.pyw\0        (VA 0x01cd04d0)
+ *     See docs/host-contract.md:143-151, which already recorded this
+ *     correctly as a measurement against the sample.
+ *
+ * So: the suffix check is a property of the SAMPLE, not of Nuitka. The
+ * mechanism works, but it is unobservable from the host side -- there is
+ * no intermediate state the host can inspect to confirm the branch was
+ * taken. The only evidence is the final dialog behaviour. */
 #define PAYLOAD_SCRIPT_NAME L"KeySteam.py"
 
 /* Environment variables the outer KeySteam.exe sets for the payload. */
@@ -294,13 +320,18 @@ int wmain(int argc, wchar_t **argv_in)
 
     /* ---- Build argv ------------------------------------------------ *
      *
-     * argv[0] MUST end in ".py". The payload strips and casefolds it
-     * and compares against (".py", ".pyw") to conclude it is running
-     * from source, which turns off the integrity self-check.
+     * argv[0] MUST end in ".py". The SAMPLE (not Nuitka -- see the note
+     * at PAYLOAD_SCRIPT_NAME) strips and casefolds it and compares
+     * against (".py", ".pyw") to conclude it is running from source,
+     * which turns off the integrity self-check.
      *
      * Remaining arguments are forwarded from our own command line,
      * skipping host.exe and any host-level switches.
-     */
+     *
+     * NOTE ON OBSERVABILITY: because that branch lives in the sample's
+     * own Python code, this host gets no feedback about whether it was
+     * taken. There is no intermediate state to print. Do not expect a
+     * "[host] integrity skipped" line -- it cannot exist. */
     size_t script_len = wcslen(dir) + 1 + wcslen(PAYLOAD_SCRIPT_NAME);
     wchar_t *argv0 = (wchar_t *)malloc((script_len + 1) * sizeof(wchar_t));
     if (!argv0) {

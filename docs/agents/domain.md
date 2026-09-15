@@ -45,12 +45,22 @@ When your output names a domain concept — in an issue title, a spec heading, a
 
 ## Flag ADR conflicts
 
-There are no ADRs. The equivalent obligation here is **documentation drift**, which this project has already produced once — see below.
+There are no ADRs. The equivalent obligation here is **documentation drift**, which this project has produced repeatedly. The drift register below is the mechanism — add to it whenever you correct a claim, rather than relying on the next reader's memory.
 
-## Known doc drift — correct it, don't inherit it
+### Drift register
 
-`KeySteam-无验证运行-落地方案.md` §4 (line ~96) and the handoff document's §10 (line ~163) both claim that modifying `main.dll` mismatches `body_sha256` and therefore triggers `TAMPERED`. **That claim was superseded on 2026-09-15** by the same document's own §5.4 correction, and by `_re/signature_facts.md`.
+| Claim | Where it lived | Status | Correct position |
+| --- | --- | --- | --- |
+| Modifying `main.dll` mismatches `body_sha256` and trips `TAMPERED` | `KeySteam-无验证运行-落地方案.md` §4 (line ~96); handoff §10 (line ~163) | **Superseded 2026-09-15** | The local trailer covers **`KeySteam.exe` only**. `main.dll` has no trailer (last 64 bytes are `0x00`); its integrity travels the remote-manifest branch plus a process-module scan. See `_re/signature_facts.md`. |
+| The `.py`-suffix check that disables the integrity self-check is part of Nuitka's C runtime | `host/host.c` comments (two sites); implicit in `docs/run-plan.md`'s observation table | **Corrected 2026-09-15** | Nuitka's runtime has **no** suffix branch — `grep -rn 'pyw\|\.py"'` across `MainProgram.c`, `OnefileBootstrap.c`, `HelpersFilesystemPaths.c` returns zero matches. The check lives in the **sample's own compiled Python code** (constant tuple `P\x02u.py\0u.pyw\0`, VA `0x01cd04d0`). `docs/host-contract.md:143-151` already recorded this correctly. |
+| The current verification ticket is expired ("two-day-old cache cannot still be fresh") | `#3` comment `5672996712` | **Retracted 23 seconds later by `#4` comment `5672999531`** — both comments stand, the issue bodies were corrected 2026-09-15 | Ticket validity is **unknown**, not known-expired. `expires_at` duration is not evidenced; "daily rotation" refers to the server-side code version (`published_at`), which is a different thing. Treat it as an uncontrolled variable. |
+| `[host] run_code returned N` proves the call completed | `docs/run-plan.md` observation table; handoff §3.3 | **Corrected 2026-09-15** | Unreachable on the normal path. `run_code` → `Nuitka_Main` → `EXECUTE_MAIN_MODULE` → `Py_Exit` (`MainProgram.c:2355`) terminates the process; the line prints only on *abnormal* exit. |
+| Host exit code `5` = environment variable setting failure | handoff §3.3 | **Corrected 2026-09-15** | No `return 5` exists in `host.c`. `LoadLibraryExW` failure yields **`3`**; the handoff omitted that row. See `host/README.md`. |
+| The host runs against an isolated environment | `AGENTS.md`; `docs/run-plan.md` checklist | **Corrected 2026-09-15** | This machine already runs this class of tool (`KeySteamTool.dll`, `cloud_redirect.dll`, `cloud_redirect.log` written today, modified `steam.exe`). The checklist now records measured state instead. See `AGENTS.md`. |
+| `gh issue view <n> --comments` is how you read an issue | `docs/agents/issue-tracker.md` | **Corrected 2026-09-15** | Fails outright on gh 2.46.0 (GraphQL requests the deprecated `repository.issue.projectCards`). Use the REST API via `gh api`; the doc now shows the working commands. |
 
-The corrected position: the local trailer covers **`KeySteam.exe` only**. `main.dll` has no trailer (its last 64 bytes are `0x00`). `main.dll`'s integrity travels the **remote manifest** branch plus a process-module scan.
+### On correcting an issue
 
-When you find yourself reasoning from the superseded claim, stop and re-read `_re/signature_facts.md`. If an issue or spec touches this area, surface the drift explicitly rather than silently picking a side.
+When a claim in an issue comment turns out to be wrong, **append a correcting comment rather than silently editing the body**, and edit the body as well so the two agree. Appending preserves the reasoning trail — a reader can see *why* a conclusion was once drawn — while the body edit keeps the authoritative text clean for anyone who reads only the top of the ticket. The `#3`/`#4` ticket-validity retraction is the worked example: the retraction lived only in a comment for a day, and any reader who stopped at `#3`'s body would have taken the withdrawn claim as settled.
+
+
