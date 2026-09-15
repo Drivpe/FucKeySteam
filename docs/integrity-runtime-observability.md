@@ -3,14 +3,22 @@
 对象：`_re/bin/main.dll`（31,088,128 B，PE32+ x64，Nuitka onefile 业务模块）
 方法：纯静态。`.rdata` 常量表逐字节解析（Nuitka 编码还原）+ 节表偏移换算。**未运行样本、未执行 host.exe、未修改任何文件。**
 
-节表基准与换算：
+节表基准与换算（`objdump -h main.dll` 实测重导，2026-09-15 复核）：
 ```
-.text   VA=0x1000      off=0x400       vsz=0x143b388
-.rdata  VA=0x143d000   off=0x143b800   vsz=0x9104a8
+.text   RVA=0x1000      off=0x400       vsz=0x143b388
+.rdata  RVA=0x143d000   off=0x143b800   vsz=0x9104a8
 ImageBase = 0x180000000
-main.dll 文件偏移 = rdata.bin 偏移 + 0x143b800
-VA              = rdata.bin 偏移 + 0x143d000
 ```
+
+三种坐标，**不要混用**（`rdata.bin` 是 `.rdata` 的整节转储，其偏移是**节内偏移**）：
+
+| 要算的量 | 公式 |
+| --- | --- |
+| 节内偏移 `o` → 文件偏移 | `o + 0x143b800` |
+| 节内偏移 `o` → RVA | `o + 0x143d000` |
+| 节内偏移 `o` → VA | `o + 0x143d000 + 0x180000000` |
+
+**漂移警告**：本文早先版本写的是 `VA = rdata.bin 偏移 + 0x143d000`，**漏掉 ImageBase**，因此旧的「`0x1cd....`」型 VA 全部是 RVA 而非 VA。`.rdata` 内以「`0x8...`」起头的坐标（如 `0x893f6e`）是第三种刻度——它们既不是节内偏移也不是文件偏移，来源未查清，**仅可用于同一刻度内的相对比较**。复核时以「用上面三式从原件重算」为准。
 
 ---
 
@@ -20,7 +28,9 @@ VA              = rdata.bin 偏移 + 0x143d000
 2. **`_integrity_runtime_supported()` 的返回值没有任何外部可观测差异。** 五条候选链路（磁盘写、模块集合、网络、UI 门控、进程守护）全部与它解耦。
 3. **payload 目录修改不触碰签名校验。** 但 `RuntimeGuard` 的注入检测会扫描进程模块——好在存在 `temp_rule=False` 跳过开关，且 docstring 明确 onefile 的 DLL 天然全在 `%TEMP%`。
 4. **旧探针失败原因 = (b) 路径硬编码失效。** 已确证硬编码的解包目录不存在。
-5. **结论：缺口不能通过"观测返回值"闭合。** 该函数是纯判定，无副作用，其返回值只影响一条**进程内不可见**的短路。最接近的替代判据见第 5 节。
+5. **结论：缺口不能通过"观测返回值"闭合。** 该函数是纯判定，无副作用，其返回值只影响一条**进程内不可见**的短路。原先认为最接近的替代判据（候选 A）**已证伪**——见第 5 节。
+6. **（2026-09-15 追加）全文 VA 换算已复核。** 早先版本引用的若干 VA 存在系统性偏移（如 `.py/.pyw` 元组记为 `0x01cd04d0`，实测应为 `0x181cd0564`）。本版所有 VA 均由 `main.dll` 原件按节表重算，公式见文首。
+7. **（2026-09-15 追加）`runtime_guard` 常量块内含大量未记录的中文 docstring**，其中 `_spawn_watchdog` 的 docstring 直接给出了看门狗的启动语义，是候选 A 证伪的关键证据。
 
 ---
 
@@ -227,7 +237,60 @@ main.dll 尾部 64 B 全 00（无 trailer）
 0x89661d  a_on_tamper ... 0x896695  a_frozen_runtime_supported
 ```
 
-与 `IntegrityService._running_from_python_source` **完全同构**。这暗示：宿主若让 `argv[0]` 以 `.py` 结尾，**RuntimeGuard 也会一并走「源码运行」降级路径**，而非独立触发注入警报。这**降低了** pyd 注入之外的旁路风险，但也**未能确证** `RuntimeGuard.start()` 是否据此提前返回（见 5.3）。
+与 `IntegrityService._running_from_python_source` **完全同构**。
+
+**2026-09-15 修正（候选 A 前提已确证为假）**：`_frozen_runtime_supported` 是**实例属性**，不是方法，且**全库只出现一次**——仅在该属性名的赋值序列中，**无任何读取点**。
+
+证据是 qualified 方法名的枚举（`u<Class>.<method>` 是 Nuitka 为真实方法生成的条目）：
+
+```
+uRuntimeGuard._start_accept_thread   uRuntimeGuard._watchdog_failed
+uRuntimeGuard.__init__               uRuntimeGuard._scan_self_and_raise
+uRuntimeGuard.start                  uRuntimeGuard._request_watchdog_kill
+uRuntimeGuard._spawn_watchdog        uRuntimeGuard._send_heartbeat
+uRuntimeGuard.stop                   uRuntimeGuard._trigger_tamper
+uRuntimeGuard._teardown_resources    uRuntimeGuard._run_loop
+uRuntimeGuard._restart_watchdog
+```
+
+共 14 个方法，**不含** `_frozen_runtime_supported`。对照 `IntegrityService`：`uIntegrityService._integrity_runtime_supported` **是**方法（`0x181cd0f6e`），与 `_running_from_python_source`（`0x181cd0f40`）并列。
+
+出现次数统计（全 `rdata` 节）：
+
+| 名字 | 出现次数 | 性质 |
+|---|---|---|
+| `_frozen_runtime_supported` | **1** | 属性名，仅赋值，无读取 |
+| `_spawn_watchdog` | 2 | 属性名 + 方法名 |
+| `_restart_watchdog` | 2 | 属性名 + 方法名 |
+| `_start_accept_thread` | 3 | 属性名 + 方法名 ×2 |
+| `watchdog_enabled` | 2 | 属性名 + 读取点 |
+
+**因此 `RuntimeGuard.start()` 不可能「以 `_frozen_runtime_supported()` 为提前返回条件」**——那个东西不是可调用对象，也没有读取点。`#7` 候选 A 的预设前提不成立，候选 B（对照实验）随之失去意义。
+
+同构常量（`argv`/`resolve`/`suffix`/`.py`/`.pyw`）同时出现在两个类里，只能证明**样本作者抽了同一段后缀判定逻辑**，不能证明两处都绑在控制流上。
+
+### 3.3 `RuntimeGuard` 的明文 docstring 清单（2026-09-15 新增）
+
+`runtime_guard` 常量块内有大量**未混淆的中文 docstring**。它们此前未被登记，而其中数条直接描述控制流语义——**这比反汇编更快、更硬**。全文如下（VA 由原件重算）：
+
+| VA | 文本 | 归属 |
+|---|---|---|
+| `0x181cd385f` | 创建监听管道并启动看门狗子进程，失败时清理资源。 | `_spawn_watchdog` |
+| `0x181cd43f7` | 看门狗 + 注入检测。 | 类 docstring |
+| `0x181cd341f` | 当前环境不支持进程模块扫描。 | `_scan_self_and_raise` |
+| `0x181cd3eb0` | 看门狗进程主循环：存活监控 + 注入扫描 + 心跳超时强制结束主进程。 | 看门狗侧 |
+| `0x181cd39fa` | 运行时守护进程多次异常，已降级为仅自检模式。 | `_watchdog_failed` |
+| `0x181cd3a40` | 运行时守护进程重启失败，已降级为仅自检模式。 | `_restart_watchdog` |
+| `0x181cd3a84` | 有界重启看门狗；重试用尽或启动失败时降级为仅自检模式。 | `_restart_watchdog` |
+| `0x181cd34b0` | 返回目标进程加载的可疑模块（路径，原因）。 | `suspicious_modules_for` |
+
+类 docstring 的续段（同一字符串，起点 `0x181cd43f7`，结尾紧接 `aRuntimeGuard`/`a__qualname__`，可确认归属该类）：
+
+> 主进程侧守护：定时扫描自身加载模块，并通过命名管道向独立看门狗进程发送心跳。检测到可疑模块或看门狗异常时，通过 ``on_tamper`` 回调锁定程序，并请求看门狗强制结束主进程。
+
+**判读**：`_spawn_watchdog` 的 docstring 是**无条件语义**（「创建…并启动…」），且没有任何「后缀判定为真则跳过」的措辞。这与 §3.2 的属性/方法证据互相印证，共同构成候选 A 的证伪。
+
+**新的观察面**：样本自己定义了「**降级为仅自检模式**」这一状态，并由 `_watchdog_failed` / `_restart_watchdog` 在**看门狗启动失败或重启耗尽**时进入。这说明「看门狗未出现」**并非只可能由当前 argv 后缀造成**——也可能是启动失败降级。原候选 A 的推理（看门狗缺失 ⇒ 后缀判定为真）因此还有第二条替代解释，即便前提成立也不成立为**唯一**归因。
 
 ---
 
@@ -308,28 +371,40 @@ data = open(os.path.join(D, "main.dll"), "rb").read()   # D 不存在 → 此处
 
 按证据强度排序，三条候选：
 
-**候选 A（最强，但需运行期，超出「静态」范围）——同构判定的旁证**
+**候选 A —— 已证伪（2026-09-15）**
 
-`RuntimeGuard._frozen_runtime_supported`（`0x896695`）与 `IntegrityService._running_from_python_source` 使用**同一组常量**（`argv`/`resolve`/`suffix`/`.py`/`.pyw`，off=`0x8965f9`–`0x896617`）。若能在运行期观察到 RuntimeGuard **未启动看门狗子进程**（无 `--watchdog`@`0x8967e2` 子进程、无 `\\.\pipe\keysteam_guard_` 管道），即可**间接**证明该 `argv[0]` 后缀判定为真——从而同时证明 `_integrity_runtime_supported()` 为 False。
+原表述：`RuntimeGuard._frozen_runtime_supported` 与 `IntegrityService._running_from_python_source` 同构，若运行期观察到看门狗未启动，即可间接证明后缀判定为真。
 
-**这比「没弹窗」强得多**：它观测的是一条**主动行为的有无**（子进程创建 + 命名管道监听），而非被动告警的缺失。
+**该前提不成立。** 第 3.2 节的修正给出了代码级证据：`_frozen_runtime_supported` 是**实例属性**——不在 `RuntimeGuard` 的 14 个 qualified 方法名中，全库仅出现 1 次（仅赋值，无读取）。属性不可调用，也没有读取点，因此不可能是 `start()` 的条件判断。
 
-**未能确证项**：`RuntimeGuard.start()` 内部是否真的以 `_frozen_runtime_supported()` 为提前返回条件，未取得代码级证据。常量表只能证明该判定函数存在且与 `.py/.pyw` 同构，**不能证明它与 `start()` 的控制流绑定**。这一条需反汇编 `RuntimeGuard.start`（`0x89758b` 对应的代码体）才能定论。
+同时，`start()` 的实际语义与假设相反。`RuntimeGuard._spawn_watchdog` 的 docstring（VA `0x181cd385f`，明文）是：
 
-**候选 B（中等）——`.pyd` 侧信道**
+> 创建监听管道并启动看门狗子进程，失败时清理资源。
+
+即「无条件创建管道 + 启动子进程」，**没有任何「据此提前返回」的表述**。
+
+**候选 B —— 随 A 一并失效**
+
+候选 B 是「在 suffix 判定为假的配置下跑一次，看看门狗是否启动」的对照实验。它的设计前提是 A（存在一条由该判定控制的分支）。A 已证伪，对照无对象。
+
+**候选 C（中等）——`.pyd` 侧信道**
 
 `_ctypes.pyd`（payload 目录，116,224 B）存在于 `python312.dll` 的导入解析路径上。若在 payload 副本内替换该文件并让其中一段代码把 `sys.argv[0]` 的解析结果写入 payload 目录外的临时文件，即可直接读出该判定的输入。**但**：
 - 这**修改了 payload**（虽不影响 `KeySteam.exe` 的 `body_sha256`，见 3.1）
 - 会新增一个模块映射，可能触发 `_INJECTION_REASON_*`（`temp_rule` 的默认值**未能确证**）
-- 强于候选 A 之处在于直接读出 `bool`；弱于候选 A 之处在于引入了新的可检测面
+- 它**直接读出 `bool`**，是三条候选里唯一直接观测输入的手段
 
-**候选 C（最弱，但零改动）——磁盘差异比对**
+**候选 D（最弱，但零改动）——磁盘差异比对**
 
 `signature_facts.md` 已确认启动期 `%APPDATA%\Shikieiki\verification.cache`（605 B）存在。但因第 2.3 节已证明**五条磁盘链路全部与该返回值解耦**，此路径**不成立**——无法用磁盘 diff 区分 DISABLED 与 TAMPERED。列出仅为排除。
 
+**未解线索（供后续）——`watchdog_enabled`**
+
+`RuntimeGuard` 存在 `watchdog_enabled` 属性，且有**读取点**（出现 2 次：属性名 + 消费）。它与 `_scan_self_and_raise`、`_send_heartbeat`、`_HEARTBEAT_INTERVAL_SECONDS` 同区，是看门狗启停的**真实开关**。本轮未追它的赋值来源。若它由 argv 后缀或环境决定，则「看门狗未出现」这条观测的价值可以恢复——但**必须先证明其赋值链**，不能重犯候选 A 的错（把「名字相邻」当作「控制流绑定」）。
+
 ### 5.4 一句话结论
 
-**这个缺口不能闭合。** `_integrity_runtime_supported()` 的返回值本身在进程外不可观测——它是纯判定，两条分支的外部行为完全一致。最接近的替代观测不是去盯返回值，而是去观测**与它同构的 `RuntimeGuard._frozen_runtime_supported` 判定所导致的副作用**：即「看门狗子进程与命名管道是否被创建」。这观测的是一条主动行为的有无，比「没出现 `倒卖可耻` 弹窗」这种否定证据强得多；但其前提（`RuntimeGuard.start()` 是否以该判定为提前返回条件）**未能确证**，需反汇编 `RuntimeGuard.start` 才能定论。
+**`_integrity_runtime_supported()` 的返回值本身在进程外不可观测**——它是纯判定，两条分支的外部行为完全一致。原先被认为「最接近」的替代观测（候选 A：看门狗未启动 ⇒ 后缀判定为真）**已被证伪**：那个判定是实例属性、无读取点；`start()` 的行为是无条件启停看门狗。剩余可行路径只有候选 C（`.pyd` 侧信道，直接读出 `bool`，代价是引入可检测面），或把 `watchdog_enabled` 的赋值链查清后重建间接判据。
 
 ---
 

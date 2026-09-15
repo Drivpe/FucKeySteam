@@ -268,23 +268,36 @@ and as text via `FormatMessageW`, for both `LoadLibraryExW` and
 ## Command line
 
 ```
-host.exe --dll <path\to\main.dll> [--no-envp] [args...]
+host.exe --dll <path\to\main.dll> [--no-envp] [--null-3rd] [args...]
 ```
 
 - `--dll <path>` — path to `main.dll`. The payload directory is derived
   from its parent, and that directory is used for `AddDllDirectory`, for
   `NUITKA_ONEFILE_DIRECTORY`, and as the prefix of `argv[0]`.
-- `--no-envp` — passes `NULL` as `run_code`'s third argument, for the
-  comparison experiment. Default is the `main.dll` path. (The switch
-  name is historical; the argument it drops is the DLL path, not an
+- `--no-envp` — do **not** set `NUITKA_ONEFILE_DIRECTORY` /
+  `NUITKA_ORIGINAL_ARGV0` in the process environment. Default is to set
+  both.
+- `--null-3rd` — pass `NULL` as `run_code`'s third argument. Default is
+  the absolute `main.dll` path. (The argument carries the DLL path, not an
   environment block.)
 - `args...` — forwarded to `run_code` after `argv[0]`. Host-level
   switches are not forwarded.
 - `--help` / `-h` — usage.
 
-Before loading anything the host prints the resolved paths, the mode,
-the constructed `argv` array and the two injected variables, so a run
-log records exactly what `run_code` received.
+**The two switches are independent**, and they used to be one. Before
+2026-09-15 `--no-envp` did *both* jobs, so the "control run" varied the
+third argument **and** the environment at once — a compound diff that
+could not attribute anything. Re-derive the current split rather than
+trusting a remembered flag name:
+
+```bash
+grep -n 'inject_env\|pass_third' host/host.c
+```
+
+Before loading anything the host prints the resolved paths, the switch
+state, the constructed `argv` array and the two injected variables, so a
+run log records exactly what `run_code` received. The switch banner reads
+`[host] switches = env:inject|skip  third:dll path|NULL (control run)`.
 
 ---
 
@@ -301,7 +314,14 @@ Baseline run, from Windows in the payload directory:
 D:\path\to\keysteam-unlock-spike\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll"
 ```
 
-Comparison run, passing NULL instead of the DLL path:
+Comparison run, passing NULL instead of the DLL path (and still
+injecting the environment, so only the third argument varies):
+
+```cmd
+D:\path\to\keysteam-unlock-spike\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll" --null-3rd
+```
+
+Second comparison run, dropping only the environment variables:
 
 ```cmd
 D:\path\to\keysteam-unlock-spike\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll" --no-envp

@@ -169,7 +169,8 @@ static wchar_t *dir_of(const wchar_t *file_path)
 
 int wmain(int argc, wchar_t **argv_in)
 {
-    int use_envp = 1;          /* default: full envp */
+    int inject_env = 1;   /* default: set the two NUITKA_* variables */
+    int pass_third = 1;   /* default: third argument = absolute dll path */
     const wchar_t *dll_arg = NULL;
     int status;
 
@@ -177,18 +178,25 @@ int wmain(int argc, wchar_t **argv_in)
 
     for (int i = 1; i < argc; i++) {
         if (wcscmp(argv_in[i], L"--no-envp") == 0) {
-            use_envp = 0;
+            inject_env = 0;
+        } else if (wcscmp(argv_in[i], L"--null-3rd") == 0) {
+            pass_third = 0;
         } else if (wcscmp(argv_in[i], L"--dll") == 0 && i + 1 < argc) {
             dll_arg = argv_in[++i];
         } else if (wcscmp(argv_in[i], L"--help") == 0 ||
                    wcscmp(argv_in[i], L"-h") == 0) {
             fwprintf(stderr,
                      L"usage: host.exe --dll <path\\to\\main.dll> "
-                     L"[--no-envp] [args...]\n"
-                     L"  --no-envp   pass NULL as run_code's third argument\n"
-                     L"              (control run; the third argument is main.dll's path,\n"
-                     L"               not an environment block)\n"
-                     L"  args...     forwarded to run_code after argv[0]\n");
+                     L"[--no-envp] [--null-3rd] [args...]\n"
+                     L"  --no-envp   do NOT set NUITKA_ONEFILE_DIRECTORY /\n"
+                     L"              NUITKA_ORIGINAL_ARGV0 in the process env\n"
+                     L"  --null-3rd  pass NULL as run_code's third argument\n"
+                     L"              (control run; the third argument is main.dll's\n"
+                     L"               path, not an environment block)\n"
+                     L"  args...     forwarded to run_code after argv[0]\n"
+                     L"\n"
+                     L"The two switches are INDEPENDENT. --no-envp alone no longer\n"
+                     L"also nulls the third argument, so each can be varied alone.\n");
             return 0;
         } else {
             /* First non-switch token: treat as the dll path if not yet
@@ -202,7 +210,7 @@ int wmain(int argc, wchar_t **argv_in)
     if (!dll_arg) {
         fwprintf(stderr, L"[host] FATAL: no DLL path given\n");
         fwprintf(stderr, L"[host] usage: host.exe --dll <path\\to\\main.dll> "
-                         L"[--no-envp] [args...]\n");
+                         L"[--no-envp] [--null-3rd] [args...]\n");
         return 2;
     }
 
@@ -231,8 +239,9 @@ int wmain(int argc, wchar_t **argv_in)
 
     fwprintf(stderr, L"[host] dll      = %ls\n", dll_path);
     fwprintf(stderr, L"[host] payload  = %ls\n", dir);
-    fwprintf(stderr, L"[host] 3rd arg  = %ls\n",
-             use_envp ? L"main.dll path" : L"NULL (control run)");
+    fwprintf(stderr, L"[host] switches = env:%ls  third:%ls\n",
+             inject_env ? L"inject" : L"skip",
+             pass_third ? L"dll path" : L"NULL (control run)");
 
     /* ---- Load the module ------------------------------------------- *
      *
@@ -390,6 +399,8 @@ int wmain(int argc, wchar_t **argv_in)
     for (int i = 1; i < argc; i++) {
         if (wcscmp(argv_in[i], L"--no-envp") == 0)
             continue;
+        if (wcscmp(argv_in[i], L"--null-3rd") == 0)
+            continue;
         if (wcscmp(argv_in[i], L"--dll") == 0) {
             i++; /* also skip its value */
             continue;
@@ -408,6 +419,8 @@ int wmain(int argc, wchar_t **argv_in)
     int ci = 1;
     for (int i = 1; i < argc; i++) {
         if (wcscmp(argv_in[i], L"--no-envp") == 0)
+            continue;
+        if (wcscmp(argv_in[i], L"--null-3rd") == 0)
             continue;
         if (wcscmp(argv_in[i], L"--dll") == 0) {
             i++;
@@ -436,8 +449,9 @@ int wmain(int argc, wchar_t **argv_in)
      *       Set it to make original_argv0 name the host rather than the
      *       script path we hand to argv[0].
      *
-     * Both are opt-out via --no-envp for the control run. */
-    if (use_envp) {
+     * Both are opt-out via --no-envp, INDEPENDENTLY of the third argument
+     * (which --null-3rd controls). Vary one at a time. */
+    if (inject_env) {
         wchar_t self[MAX_PATH];
         DWORD n = GetModuleFileNameW(NULL, self, MAX_PATH);
         wchar_t *host_dir = (n && n < MAX_PATH) ? dir_of(self) : NULL;
@@ -461,15 +475,18 @@ int wmain(int argc, wchar_t **argv_in)
     /* ---- Invoke ---------------------------------------------------- *
      *
      * The third argument is the absolute path to main.dll. Passing NULL
-     * instead (--no-envp) does not crash: the callee skips
+     * instead (--null-3rd) does not crash: the callee skips
      * setDllFilename and _pseudo_dll_filename stays NULL, so
      * getBinaryFilenameWideChars falls through to
      * GetModuleFileNameW(NULL, ...) and reports main.dll's own path.
      * That is a valid control run for isolating the parameter's effect.
      *
-     * Do NOT run this against a real target outside an isolated VM.
+     * --null-3rd is INDEPENDENT of --no-envp. The original host tied both
+     * to one flag, so the "control run" varied two things at once and
+     * neither could be attributed. Missing this is the trap: a compound
+     * diff read as a single-variable result.
      */
-    const wchar_t *third = use_envp ? dll_path : NULL;
+    const wchar_t *third = pass_third ? dll_path : NULL;
 
     fwprintf(stderr, L"[host] calling run_code(argc=%d, argv=%p, dll=%ls)\n",
              ci, (void *)child_argv, third ? third : L"NULL");

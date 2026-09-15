@@ -186,7 +186,7 @@ reg.exe query "HKCU\Software\Valve\Steam\ActiveProcess" /v ActiveUser
 | 观测项 | 判读 |
 |---|---|
 | `[host] dll = ...` / `payload = ...` | 路径推导是否符合预期 |
-| `[host] 3rd arg = main.dll path` | 第三参数模式；`NULL (control run)` 仅 `--no-envp` 时出现 |
+| `[host] switches = env:...  third:...` | 两个开关的独立状态；`third:NULL (control run)` 仅 `--null-3rd` 时出现 |
 | `[host] argc = N` 与逐条 `argv[i]` | argv 构造；**`argv[0]` 必须以 `.py` 结尾**，这是本方案的载荷 |
 | `[host] run_code @ 0x...` | 非 NULL ⇒ `GetProcAddress` 成功，「已知阻碍 1」被证伪 |
 | `keysteam-runtime-guard` 进程 | 出现/不出现 |
@@ -311,7 +311,7 @@ Nuitka 的 C 运行时**没有**任何后缀分支。该判定位于**样本自�
 | `first_run.cache` | 存在（2026-09-12 13:49，63 B） | 不变（首运行弹窗应不出现，这是范围边界） | 是 |
 | Steam 登录状态 | 手动启动并登录小号 `drivpe114514` | **同样手动启动并登录小号** | **是（2026-09-15 追加）** |
 | `config/stplug-in/` 内容 | 5 个脚本（跑前从备份恢复） | **跑前同样从备份恢复** | **是（2026-09-15 追加）** |
-| `--no-envp` | 不用（传 `main.dll` 路径） | 不用 | 是 |
+| `--no-envp` / `--null-3rd` | 都不用（env 注入，第三参数传路径） | 都不用 | 是 |
 
 后两项是 2026-09-15 追加的一致性要求，各有依据：
 
@@ -322,26 +322,44 @@ Nuitka 的 C 运行时**没有**任何后缀分支。该判定位于**样本自�
 
 两次都传 `main.dll` 的绝对路径作为第三参数。
 
-### `--no-envp` 的真实语义（与 `#4` 的一条归因假设冲突）
+### 开关已拆分（2026-09-15 修复，`#7` 问题三）
 
-`--no-envp` **不是**一个单纯的「第三参数对照组」。看 `host.c` 里第三参数那行（`grep -n 'const wchar_t \*third' host/host.c`）：
+**旧形态（已废弃）**：两个变量绑在同一个标志上。
 
 ```c
 const wchar_t *third = use_envp ? dll_path : NULL;
+...
+if (use_envp) { SetEnvironmentVariableW(...); ... }
 ```
 
-而 `use_envp` 同时还包着 同一函数里紧邻的那段（`grep -n 'if (use_envp)' host/host.c`） `SetEnvironmentVariableW`（`NUITKA_ONEFILE_DIRECTORY` 与 `NUITKA_ORIGINAL_ARGV0`）。所以这个开关**同时关掉两件事**：
+`--no-envp` **同时**关掉第三参数与两个环境变量注入，跑出来是**复合差异**而非单变量对照。这也阻塞了 `#4` 评论提出的「第三证据」（观测 `NUITKA_ONEFILE_DIRECTORY` 注入是否生效）——要观测 env 注入就必须跑 `use_envp=1` 那一路，而那一路上第三参数也同时被传了。
 
-1. 第三参数从 `main.dll` 路径变为 `NULL`；
-2. 两个环境变量都不设置。
+**现形态**：两个独立开关。
 
-`#4` 的评论提出「观测 `NUITKA_ONEFILE_DIRECTORY` 注入是否生效」可作为独立于两条弹窗链的**第三证据**。在 `host.c` 当前形态下，**这个实验做不出来**——要观测 env 注入结果就必须跑 `use_envp=1` 那一路，而那一路上第三参数也同时被传了，两个变量绑死在一起。
+```c
+int inject_env = 1;   /* default: set the two NUITKA_* variables */
+int pass_third = 1;   /* default: third argument = absolute dll path */
+...
+const wchar_t *third = pass_third ? dll_path : NULL;
+```
 
-更根本的疑问在静态分析里：`NUITKA_ONEFILE_DIRECTORY` 在 Nuitka 的 `MainProgram.c` 中**完全不出现**（只在 `OnefileBootstrap.c` 语境使用）。而本宿主**不是** onefile bootstrap，是直接加载 dll。所以这个环境变量对本样本**可能根本没有消费点**——若真如此，`#4` 那条归因逻辑与「`.py` 后缀」犯的是同一个错层错误。
+| 开关 | 作用 |
+| --- | --- |
+| `--no-envp` | **仅**跳过 `NUITKA_ONEFILE_DIRECTORY` / `NUITKA_ORIGINAL_ARGV0` 注入 |
+| `--null-3rd` | **仅**把第三参数从 `main.dll` 路径变为 `NULL` |
 
-**结论：本条留作已知限制，不在本轮修复。** 要让它可用，需在 `host.c` 增加独立开关（第三参数与 env 分开控制）并重新构建；但在此之前应先确证样本是否真的读取该变量，否则观测了也没有读数。
+四种组合已实测（重导：`grep -n 'inject_env\|pass_third' host/host.c`）：
 
-`--no-envp` 的 NULL 变体留到两次都跑通后再做——它是**对照组**，价值在于回答「第三参数传 NULL 时行为如何不同」，而不是回答「argv 方案是否成立」。在没有基线的情况下跑对照组没有判读意义。
+| 命令行 | banner | `run_code` 的第三参数 |
+| --- | --- | --- |
+| 无 | `env:inject  third:dll path` | 完整路径 |
+| `--no-envp` | `env:skip  third:dll path` | 完整路径 ← 不再连带置 NULL |
+| `--null-3rd` | `env:inject  third:NULL (control run)` | `NULL` |
+| 两者 | `env:skip  third:NULL (control run)` | `NULL` |
+
+现在可以做真正的单变量对照：先跑基线，再**只**加一个开关。
+
+**仍未解决的前置疑问**：`NUITKA_ONEFILE_DIRECTORY` 在 Nuitka 的 `MainProgram.c` 中**完全不出现**（只在 `OnefileBootstrap.c` 语境使用）。本宿主**不是** onefile bootstrap，而是直接加载 dll。所以该环境变量对本样本**可能根本没有消费点**——若真如此，观测它得不到读数。**开关已就绪，但在跑之前应先确证样本是否真的读取该变量**，否则只是把「跑不动」换成了「跑了没读数」。
 
 
 ---
@@ -426,20 +444,21 @@ cp -a "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in" \
 
 ---
 
-## 一次都没跑过的东西（诚实标注）
+## 运行历史与已验证项（2026-09-15 更新）
 
-`host.exe` 自构建以来**从未运行**。以下仍属未验证（静态分析能回答的已标注）：
+`host.exe` **已运行过两次**（首次失败、修复后成功）。证据存档：`.scratch/run1-err87-20260915-103403/`（错误 87）、`.scratch/run-20260915-104640/`（成功）。
 
 | 项 | 状态 |
 |---|---|
-| `LoadLibraryExW` 是否真的成功 | **未验证**——需实测 |
-| `GetProcAddress` 是否真的返回非 NULL | **未验证**——需实测；这是「已知阻碍 1」 |
-| 第三参数（`main.dll` 路径）是否被正确消费 | **未验证**（消费点 `setDllFilename` 仅存指针，已静态确证；但传参是否正确到达需实测） |
-| `argv[0]` 的 `.py` 后缀是否真的触发源码运行分支 | **未验证**，且**结构性不可观测**——判定在样本 Python 层，宿主侧无中间态。只能靠最终弹窗反推。 |
-| 两个「已知阻碍」在原生宿主下是否消失 | **未验证**——需实测 |
-| `pyinit_core_reconfigure: failed to read thread state` | **未验证**——「已知阻碍 2」 |
+| `LoadLibraryExW` 是否真的成功 | **已验证**（修复全限定路径后）。首次失败 = 错误码 **87**，成因见 `#7` / 交接文档 §2.1 |
+| `GetProcAddress` 是否真的返回非 NULL | **已验证**——`run_code @ 00007FFDF89FB380`。「已知阻碍 1」未复现 |
+| 第三参数（`main.dll` 路径）是否被正确消费 | **已验证**——模块列表显示 `python312.dll` 等从 payload 目录解析 |
+| 三个环境变量/参数开关的独立性 | **已验证**——四种组合实测见「开关已拆分」一节 |
+| `pyinit_core_reconfigure: failed to read thread state` | **未复现**——「已知阻碍 2」 |
+| `argv[0]` 的 `.py` 后缀是否真的触发源码运行分支 | **仍未确证**，且**结构性不可观测**（见 `docs/integrity-runtime-observability.md` §5）。只能靠最终弹窗反推，而归因能力弱 |
+| 验证码弹窗是否消失 | **未消失**——`#1` 的原始目标**仍未达成** |
 
-宿主自身的错误路径（返回码 2/3/4）也未经触发。
+宿主自身的错误路径：`2`（用法/内存）与 `3`（`LoadLibraryExW` 失败）**已实测触发**；`4`（`GetProcAddress` 失败）**未触发**。
 
 **注意**：`run_code` 正常路径不返回（`Py_Exit` 终结进程），所以「程序跑起来了但宿主没退出」不是挂起，是正常。判读见「中止条件」。
 
