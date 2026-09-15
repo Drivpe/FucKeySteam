@@ -107,22 +107,79 @@ cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shik
 
 ---
 
+## 执行方式与路径前提（2026-09-15 实测确认）
+
+**分工**：监控从 WSL 侧调起，宿主由人在 Windows 终端手动敲。
+
+理由来自一次 WSL↔Windows 互操作实测：从 WSL 调起什么程序都可以（stdout/stderr 可重定向落盘、退出码透传、SIGINT/SIGTERM/SIGKILL 均能真实终止 Windows 进程、GUI 窗口在 Windows 桌面可见）。**但会弹模态窗口的程序会让调用方 bash 阻塞直到窗口关闭**（实测 `MessageBox` 令 bash 卡死 12 秒直至被 timeout 杀死，rc=124）。宿主正好属于这一类——它要么弹出 `倒卖可耻`、要么弹出 `VerificationDialog`，两者都需要人在场决定是否终止。所以宿主必须由人手动运行，以保留对那个窗口的控制权。
+
+监控脚本相反：纯输出、无交互、可被 `timeout` 安全包裹，从 WSL 调起最省事。
+
+**两处路径前提**（早先未写明，照抄命令会失败）：
+
+- 仓库根 = `D:\03_Work\03_Develop\keysteam-unlock-spike`
+- 样本工作区 = `D:\03_Work\03_Develop\KeySteam v2.99`
+
+下述命令中 `host\host.exe` 是**相对路径**，隐含「已 cd 到仓库根」。`--dll` 指向的是**另一棵目录树**（样本工作区），必须给绝对路径。
+
+**PowerShell 编码前提**：`monitor_keysteam.ps1` 含中文，**必须保存为 UTF-8 with BOM**。本机 PowerShell 5.1 的默认编码实测是 `gb2312`，会按 GBK 解码无 BOM 的 UTF-8 文件，导致中文注释被误解码后破坏引号配对、脚本无法解析。用编辑器改过该文件后务必确认 BOM 还在（`head -c 3 file | od -An -tx1` 应为 `ef bb bf`）。
+
+---
+
+## 每次运行前（两次都一样）
+
+```bash
+# 0. 确认监控脚本 BOM 完好、语法可用
+head -c 3 "/mnt/d/03_Work/03_Develop/KeySteam v2.99/_re/monitor_keysteam.ps1" | od -An -tx1   # 期望 ef bb bf
+powershell.exe -NoProfile -Command "\$e=\$null;[System.Management.Automation.Language.Parser]::ParseFile('D:\03_Work\03_Develop\KeySteam v2.99\_re\monitor_keysteam.ps1',[ref]\$null,[ref]\$e)|Out-Null;if(\$e.Count -eq 0){'SYNTAX OK'}"
+
+# 1. 重编宿主（不要相信仓库里的 host.exe —— 曾出现过与源码不同步的旧件）
+cd "/mnt/d/03_Work/03_Develop/keysteam-unlock-spike" && bash host/build.sh
+
+# 2. 恢复插件目录（样本会清理它；两次运行前都做，保证初始状态一致）
+TS=$(date +%Y%m%d-%H%M%S)
+DEST=".scratch/run-$TS"
+mkdir -p "$DEST"
+cp -a .scratch/stplug-in-backup-*/.. "$DEST/" 2>/dev/null || true
+cp -a "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in/." "$DEST/stplug-in-initial-snapshot/"
+ls -la "$DEST/stplug-in-initial-snapshot"   # 期望 5 个文件
+
+# 3. 记录起始时间（事后核对主号目录是否被写要用）
+date '+%Y-%m-%d %H:%M:%S' | tee "$DEST/start-time.txt"
+
+# 4. 确认 Steam 状态（每次运行前都手动退 Steam、重启、登录小号 drivpe114514）
+reg.exe query "HKCU\Software\Valve\Steam\ActiveProcess" /v ActiveUser
+# 期望：ActiveUser 非 0x0（登录后由 steam.exe 写入）。若仍是 0x0，
+# 样本会走「Steam 当前没有已登录用户」分支，本次运行的账号路径不可用于判读。
+```
+
+**第 4 步不能跳过**：两次运行之间若 Steam 登录状态不同，第 2 次就多一个未受控变量，而本方案的整个判读逻辑建立在「两次只差缓存这一个变量」之上。
+
+---
+
 ## 第 1 次运行：保留缓存
 
 ### 步骤
 
-1. **先启动监控**（顺序不可颠倒；弹窗是模态的，失败态只能退出，先看再跑才拿得到数据）：
+1. **先启动监控**（顺序不可颠倒；弹窗是模态的，失败态只能退出，先看再跑才拿得到数据）。日志直接写进本次运行的存档目录：
+   ```bash
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
+     "D:\03_Work\03_Develop\KeySteam v2.99\_re\monitor_keysteam.ps1" \
+     -Seconds 600 -LogDir "D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\run-<TS>" \
+     > "/mnt/d/03_Work/03_Develop/keysteam-unlock-spike/.scratch/run-<TS>/monitor-stdout.txt" 2>&1 &
    ```
-   powershell -ExecutionPolicy Bypass -File monitor_keysteam.ps1 -Seconds 120
-   ```
-   监控会记录：进程、命名管道、网络连接、窗口标题、数据目录变化。
+   监控记录：观察名单内的进程、命名管道、样本相关网络连接、关键窗口标题、数据目录变化、**插件目录变化（含删除）**、**主号目录写入**。
 
-2. **在监控运行期间**，另开终端启动宿主：
+2. **在监控运行期间**，在 Windows 终端手动启动宿主：
    ```
+   cd /d D:\03_Work\03_Develop\keysteam-unlock-spike
    host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll"
    ```
+   把 stdout 与 stderr 记入 `.scratch\run-<TS>\host-stdout.txt`（在 Windows 终端用 `2> file.txt` 或复制粘贴全量输出）。
 
-3. 记录宿主的 stdout 与 stderr（`[host]` 前缀行）与退出码。
+3. 记录退出码。**注意**：正常路径下宿主不返回（见下），所以「没有退出码」是预期状态。
+
+4. 若出现 `倒卖可耻` 窗口：**立即终止**，记录窗口出现的时刻（监控日志里有时间戳），然后关闭窗口（唯一按钮是「退出程序」）。
 
 ### 本次要观测的
 
@@ -134,11 +191,17 @@ cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shik
 | `[host] run_code @ 0x...` | 非 NULL ⇒ `GetProcAddress` 成功，「已知阻碍 1」被证伪 |
 | `keysteam-runtime-guard` 进程 | 出现/不出现 |
 | `\\.\pipe\keysteam_guard_` | 出现/不出现 |
-| 出站连接 | 清单 |
-| **标题 `倒卖可耻` 的窗口** | **出现 ⇒ 完整性链判定 TAMPERED，argv 方案失败**。不出现 ⇒ 完整性链被跳过 |
+| 出站连接 | 清单（监控已按进程过滤，只记观察名单内的） |
+| **标题 `倒卖可耻` 的窗口** | **出现 ⇒ 完整性链被触发**。但**不立即判失败**——见下方「为什么不再把出现等同于失败」 |
 | `VerificationDialog`（无 × 的弹窗） | 记录，但**只作环境状态**——见下方归因限制 |
-| `config/stplug-in/` 目录变化 | 样本的清理逻辑是否触发（会删 `*.lua`/`*.ks`） |
-| `userdata/1398488476/` 是否被写 | 主号保护的实际验证（预期：不写） |
+| `config/stplug-in/` 目录变化 | 样本的清理逻辑是否触发（会删 `*.lua`/`*.ks`）。**记录删除发生的时刻**，它相对验证链早晚有判读价值 |
+| `userdata/1398488476/` 是否被写 | 主号保护的实际验证（预期：不写）。若出现 `!!! 主号目录…` 行，立即终止 |
+
+### 为什么不再把 `倒卖可耻` 出现等同于失败（2026-09-15 修正）
+
+早先的判据是「出现 ⇒ argv 方案失败」。这**压掉了一条可能性**：该窗口只能确定「完整性问题被检测到」，不能确定是哪条检测链触发。`domain.md` 已记载 `main.dll` 的完整性走的是**远程清单分支加进程模块扫描**，不止一条路——argv 方案可能已生效，却触发了另一条检测。
+
+因此本次运行要记录的**不只是窗口有无，还有它出现的时刻与前后事件序列**（进程出现、管道创建、日志写入的先后）。这样「哪条链触发」才有机会从猜测变成证据。成本几乎为零，而它能区分两种后果完全不同的情形。
 
 ### 一个**不可达**的观测项（2026-09-15 修正）
 
@@ -201,13 +264,27 @@ Nuitka 的 C 运行时**没有**任何后缀分支。该判定位于**样本自�
 
 ### 步骤
 
-1. 备份并移走缓存（备份已在 `_re/backup/Shikieiki_orig/`，此步可逆）：
+1. **先恢复被第 1 次运行改变的一切**，让两次之间只剩缓存这一个变量：
+
+   ```bash
+   # (a) 恢复插件目录（第 1 次运行很可能已清空它）
+   cp -a .scratch/stplug-in-backup-*/.. "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in/"
+   ls -la "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in"   # 期望 5 个文件
+
+   # (b) 手动退 Steam → 重启 → 登录小号 drivpe114514（在 Windows 侧操作，不在 bash 里）
+   #     然后确认 ActiveUser 已非 0
+   reg.exe query "HKCU\Software\Valve\Steam\ActiveProcess" /v ActiveUser
+   ```
+
+2. 备份并移走缓存（备份已在 `_re/backup/Shikieiki_orig/`，此步可逆）：
    ```bash
    mv /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/verification.cache \
       /tmp/verification.cache.removed-$(date +%s)
    ```
-2. 重复第 1 次运行的监控与启动步骤。
-3. 观测同一张表。
+
+3. 重复第 1 次运行的监控与启动步骤（含监控脚本的 `-LogDir` 指向本次的 `.scratch/run-<TS2>/`）。
+
+4. 观测同一张表。
 
 ### 本次的判读
 
@@ -217,15 +294,31 @@ Nuitka 的 C 运行时**没有**任何后缀分支。该判定位于**样本自�
 - `倒卖可耻` 若仍不出现 ⇒ 完整性链被跳过的**正向证据**（本次已排除票据链的干扰）。
 - `verification.cache` 是否被**新建**：若程序在验证未通过时不写缓存，则该文件应保持缺失；若被创建，说明程序在无票据状态下也落了盘，需要记录。
 
+**本次的判读仍受两条限制**（与第 1 次相同）：
+
+- `倒卖可耻` 出现时，记录**时刻与事件序列**，不要直接判「argv 方案失败」——见第 1 次运行章节的说明。
+- 宿主侧看不到后缀判定的任何中间态，只能靠最终弹窗反推。
+
 ---
 
 ## 变量对照表（两次运行的差异）
 
-| 变量 | 第 1 次 | 第 2 次 |
-|---|---|---|
-| `verification.cache` | 存在（2026-09-13 20:26，605 B） | 移除 |
-| `first_run.cache` | 存在（2026-09-12 13:49，63 B） | 不变（首运行弹窗应不出现，这是范围边界） |
-| `--no-envp` | 不用（传 `main.dll` 路径） | 不用 |
+**判读逻辑的前提：两次之间只有 `verification.cache` 一个变量不同。** 任何其他差异都会污染归因。因此每次运行前都要把下列状态恢复一致（见「每次运行前」一节）。
+
+| 变量 | 第 1 次 | 第 2 次 | 必须一致的？ |
+|---|---|---|---|
+| `verification.cache` | 存在（2026-09-13 20:26，605 B） | 移除 | **否——这是要变的变量** |
+| `first_run.cache` | 存在（2026-09-12 13:49，63 B） | 不变（首运行弹窗应不出现，这是范围边界） | 是 |
+| Steam 登录状态 | 手动启动并登录小号 `drivpe114514` | **同样手动启动并登录小号** | **是（2026-09-15 追加）** |
+| `config/stplug-in/` 内容 | 5 个脚本（跑前从备份恢复） | **跑前同样从备份恢复** | **是（2026-09-15 追加）** |
+| `--no-envp` | 不用（传 `main.dll` 路径） | 不用 | 是 |
+
+后两项是 2026-09-15 追加的一致性要求，各有依据：
+
+- **Steam 登录状态**：样本的账号解析读 `HKCU\Software\Valve\Steam\ActiveProcess\ActiveUser`（实测当前 `0x0`）。这个值由 `steam.exe` 登录后写入；Steam 不在运行或未登录时它可能保持 `0x0`，样本会走「Steam 当前没有已登录用户」分支并弹窗。若两次运行的 Steam 状态不同，第 2 次就多一个未受控变量。
+- **`config/stplug-in/` 内容**：该目录的内容影响样本初始化路径（脚本对应 appid 的入库状态）。第 1 次跑完后样本可能已清空该目录；若第 2 次带着空目录跑，两次初始状态就不一致。成本是一行 `cp -a`。
+
+两处「追加」的实测依据：第 1 次运行后样本会 `terminate_all` 杀 Steam 并清理插件目录（静态确证），所以这两项**必然**被第 1 次运行改变，不主动恢复就一定会出现第二个变量。
 
 两次都传 `main.dll` 的绝对路径作为第三参数。
 

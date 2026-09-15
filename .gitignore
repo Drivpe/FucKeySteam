@@ -63,3 +63,12 @@ desktop.ini
 .scratch/*-backup-*/
 .scratch/backup-*/
 *.ks
+
+# 运行期日志与观测产物（run-plan.md 的两次运行产出：宿主 stdout/stderr、
+# 监控日志、目录快照）。属运行期数据，与本文件开头「运行期缓存留在原地」
+# 的既有原则一致，不入库。monitor-*.log 已在上面 *.log 规则内。
+.scratch/run-*/
+.scratch/ks_re-archive-*/
+
+# 临时的文件快照（脚本已正式入库 scripts/，此类快照多余）
+.scratch/*-snapshot-*/
