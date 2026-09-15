@@ -67,7 +67,10 @@ desktop.ini
 # 运行期日志与观测产物（run-plan.md 的两次运行产出：宿主 stdout/stderr、
 # 监控日志、目录快照）。属运行期数据，与本文件开头「运行期缓存留在原地」
 # 的既有原则一致，不入库。monitor-*.log 已在上面 *.log 规则内。
-.scratch/run-*/
+#
+# 命名约定：run-<时间戳>/ 为正常运行，run1-<原因>-<时间戳>/ 为带注记的
+# 运行存档（如 run1-err87-…）。两种都要排除，故用 run*。
+.scratch/run*/
 .scratch/ks_re-archive-*/
 
 # 临时的文件快照（脚本已正式入库 scripts/，此类快照多余）

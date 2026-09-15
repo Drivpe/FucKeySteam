@@ -44,7 +44,14 @@
 /* Tunables                                                            */
 /* ------------------------------------------------------------------ */
 
-/* Name of the business module inside the payload directory. */
+/* Name of the business module inside the payload directory.
+ *
+ * DIAGNOSTIC ONLY -- this is no longer passed to LoadLibraryExW. It was,
+ * and that was the bug: `LoadLibraryExW(PAYLOAD_DLL_NAME, NULL, 0xD00)`
+ * fails with ERROR_INVALID_PARAMETER (87), because
+ * LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR requires lpLibFileName to be a fully
+ * qualified path. See the block comment at the load site. The load now
+ * uses the resolved absolute path instead. */
 #define PAYLOAD_DLL_NAME L"main.dll"
 
 /* argv[0] handed to run_code. MUST end in ".py" (case-insensitive).
@@ -235,32 +242,67 @@ int wmain(int argc, wchar_t **argv_in)
      * host happens to live, or the load either fails or binds the wrong
      * Python runtime.
      *
-     * Two steps, mirroring Nuitka's own OnefileBootstrap.c:
+     * Two steps:
      *
      *   1. AddDllDirectory(payload_dir) registers the payload directory
      *      as a user directory.
      *   2. LoadLibraryExW is called with
      *        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR   0x00000100
-     *          -- also search the directory the DLL itself came from
      *        LOAD_LIBRARY_SEARCH_USER_DIRS      0x00000400
-     *          -- search directories added via AddDllDirectory
      *        LOAD_LIBRARY_SEARCH_SYSTEM32       0x00000800
-     *          -- always allow system32 for the OS itself
      *      The three OR together to 0xD00.
      *
-     * AddDllDirectory normally requires SetDefaultDllDirectories, but
-     * passing LOAD_LIBRARY_SEARCH_USER_DIRS explicitly satisfies the
-     * precondition per-process for this one call. We deliberately take
-     * that route: SetDefaultDllDirectories would change DLL resolution
-     * for every subsequent load in this process, a side effect we do
-     * not need here.
+     * ---- WHY lpLibFileName IS THE FULL PATH (fixed 2026-09-15) -------
+     *
+     * An earlier revision passed the bare name L"main.dll" here and
+     * failed at runtime with:
+     *
+     *     LoadLibraryExW(main.dll) failed
+     *     GetLastError() = 87 (0x00000057)  == ERROR_INVALID_PARAMETER
+     *
+     * Error 87 is a parameter-validation failure, not a lookup failure
+     * (that would be 2, ERROR_FILE_NOT_FOUND). The cause is documented:
+     *
+     *   LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, 0x00000100 --
+     *     "If this value is used, the directory that contains the DLL is
+     *      temporarily added to the beginning of the list of directories
+     *      that are searched for the DLL's dependencies. ... The
+     *      lpFileName parameter must specify a fully qualified path."
+     *        -- learn.microsoft.com/windows/win32/api/libloaderapi/
+     *           nf-libloaderapi-loadlibraryexw
+     *
+     * So that flag is illegal with a bare name, and it was ALSO being
+     * misunderstood: it searches for the DLL's *dependencies* in the
+     * DLL's directory; it does not locate the DLL itself. With a bare
+     * name the loader would have searched the current working directory
+     * for main.dll -- exactly the "bind the wrong runtime" failure this
+     * whole block exists to prevent.
+     *
+     * Passing dll_path (the fully qualified path we were given, or
+     * derived) fixes both problems at once: the flag is now legal, and
+     * the DLL is located by absolute path rather than by cwd.
+     *
+     * The AddDllDirectory call below needs no SetDefaultDllDirectories
+     * first. Documented, from the AddDllDirectory page:
+     *
+     *   "If SetDefaultDllDirectories is first called with
+     *    LOAD_LIBRARY_SEARCH_USER_DIRS, directories specified with
+     *    AddDllDirectory are added to the process DLL search path.
+     *    Otherwise, directories specified with the AddDllDirectory
+     *    function are used only for LoadLibraryEx function calls that
+     *    specify LOAD_LIBRARY_SEARCH_USER_DIRS."
+     *
+     * We do specify USER_DIRS, so the bare AddDllDirectory is the
+     * documented, supported combination -- and it avoids changing DLL
+     * resolution for every subsequent load in this process.
      *
      * LOAD_WITH_ALTERED_SEARCH_PATH (0x8) is deliberately NOT used: it
      * cannot be combined with the LOAD_LIBRARY_SEARCH_* flags.
      */
     if (!AddDllDirectory(dir)) {
-        /* Non-fatal in the sense that LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
-         * alone often suffices -- but report it. */
+        /* Non-fatal in the sense that LOAD_LIBRARY_SEARCH_USER_DIRS
+         * simply has no directory to search if this failed -- the other
+         * two flags may still suffice. But report it. */
         fwprintf(stderr, L"[host] WARN: AddDllDirectory failed\n");
         fail(L"AddDllDirectory");
     }
@@ -269,7 +311,11 @@ int wmain(int argc, wchar_t **argv_in)
                   LOAD_LIBRARY_SEARCH_SYSTEM32 |
                   LOAD_LIBRARY_SEARCH_USER_DIRS;
 
-    HMODULE mod = LoadLibraryExW(PAYLOAD_DLL_NAME, NULL, flags);
+    /* dll_path, not PAYLOAD_DLL_NAME -- see the block comment above.
+     * This matches Nuitka's own call site (OnefileBootstrap.c:937),
+     * which passes the fully qualified dll_filename and never a bare
+     * name. */
+    HMODULE mod = LoadLibraryExW(dll_path, NULL, flags);
     if (!mod) {
         fail(L"LoadLibraryExW(main.dll)");
         fwprintf(stderr,
