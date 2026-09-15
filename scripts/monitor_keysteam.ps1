@@ -111,6 +111,7 @@ W "数据目录基线文件数: $($base.Count)"
 $seenProcs   = @{}
 $seenConns   = @{}
 $seenWindows = @{}
+$seenTarget  = @{}   # 目标 IP 专用去重表（与 $seenConns 分离）
 
 # --- 紧循环观测的两项前提（2026-09-15 追加，#7 问题一）------
 #
@@ -164,14 +165,25 @@ function Test-Watched([string]$name) {
 
 for ($i = 0; $i -lt $Seconds; $i++) {
 
+    # --- 0. 进程快照（一次全量，供本循环各段复用）---
+    #
+    # ★ 2026-09-15 性能：原先各段各自调 Get-Process -Id 单查，而单查同样
+    #   要走一次完整进程快照。一轮里最多三次（网络段、目标 IP 段、窗口段），
+    #   等于三次全量枚举。改为本处取一次快照、建 PID→Process 映射表。
+    $procMap = @{}
+    try {
+        foreach ($p in (Get-Process -ErrorAction SilentlyContinue)) {
+            $procMap[[int]$p.Id] = $p
+        }
+    } catch { }
+
     # --- 1. 进程：守护进程 / KeySteam 本体 ---
-    Get-Process -ErrorAction SilentlyContinue | Where-Object {
-        Test-Watched $_.ProcessName
-    } | ForEach-Object {
-        $key = "$($_.Id):$($_.ProcessName)"
+    foreach ($p in $procMap.Values) {
+        if (-not (Test-Watched $p.ProcessName)) { continue }
+        $key = "$($p.Id):$($p.ProcessName)"
         if (-not $seenProcs.ContainsKey($key)) {
             $seenProcs[$key] = $true
-            W "进程出现: PID=$($_.Id) 名称=$($_.ProcessName) 路径=$($_.Path)"
+            W "进程出现: PID=$($p.Id) 名称=$($p.ProcessName) 路径=$($p.Path)"
         }
     }
 
@@ -195,54 +207,90 @@ for ($i = 0; $i -lt $Seconds; $i++) {
     #      StartMenuExperienceHost 因含 "host" 子串被误判为宿主。
     #      这与 host.c 里 wcsstr(...,".dll") 的脆弱点是同一类错误——
     #      子串匹配当精确匹配用。观察名单与判定已提到循环外统一（Test-Watched）。
-    try {
-        Get-NetTCPConnection -ErrorAction SilentlyContinue |
-            Where-Object { $_.State -eq "Established" -or $_.State -eq "SynSent" } |
-            ForEach-Object {
-                $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
-                $pn = if ($p) { $p.ProcessName } else { "?" }
-                if (-not (Test-Watched $pn)) { return }
-                $key = "$pn|$($_.RemoteAddress):$($_.RemotePort)"
+    #
+    # ★ 2026-09-15 性能改动：改用 netstat -ano 抓一次快照（约 19 ms），
+    #   供本段与 3b 段共用。原来用 Get-NetTCPConnection（约 213 ms），
+    #   它是全脚本最慢的一项，把采样率拖到约 195 ms。
+    $nsSnapshot = $null
+    try { $nsSnapshot = & netstat.exe -ano 2>$null } catch { }
+
+    if ($nsSnapshot) {
+        try {
+            foreach ($line in $nsSnapshot) {
+                if ($line -notmatch "ESTABLISHED|SYN_SENT") { continue }
+                $s = ($line -replace "\s+", " ").Trim()
+                # 期望：TCP 本地:端口 远端:端口 STATE PID
+                if ($s -notmatch '^TCP\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)') { continue }
+                $remoteEp = $Matches[2]; $state = $Matches[3]; $roPid = [int]$Matches[4]
+
+                $pn = "?"
+                if ($roPid -gt 0 -and $procMap.ContainsKey($roPid)) {
+                    $pn = $procMap[$roPid].ProcessName
+                }
+                if (-not (Test-Watched $pn)) { continue }
+                $key = "$pn|$remoteEp|$state"
                 if (-not $seenConns.ContainsKey($key)) {
                     $seenConns[$key] = $true
-                    W "网络连接: $pn -> $($_.RemoteAddress):$($_.RemotePort)  state=$($_.State)"
+                    W "网络连接: $pn(pid=$roPid) -> $remoteEp  state=$state"
                 }
             }
-    } catch {
-        W "WARN: Get-NetTCPConnection 失败，回退 netstat（netstat 无进程名，将全量记录）"
-        $ns = & netstat.exe -ano 2>$null | Select-String "ESTABLISHED|SYN_SENT"
-        foreach ($l in $ns) {
-            $s = ($l -replace "\s+", " ").Trim()
-            if ($s -match "TCP (\S+):(\d+) (\S+):(\d+)") {
-                $key = $Matches[3] + ":" + $Matches[4]
-                if (-not $seenConns.ContainsKey($key)) {
-                    $seenConns[$key] = $true
-                    W "netstat: $key"
-                }
-            }
-        }
+        } catch { W "WARN: 网络段失败: $($_.Exception.Message)" }
+    } else {
+        W "WARN: netstat 不可用，本轮无网络观测"
     }
 
-    # --- 3b. 目标 IP 专用检测（紧循环用；命中即报，不等去重）---
+    # --- 3b. 目标 IP 专用检测（netstat 高频采样）---
     #
-    # 判据不依赖 DNS 时序：只要出现到目标 IP 的连接，分支 (a)
-    # 「弹窗不需要联网」立即被排除。这一条比通用网络段更灵敏——
-    # 通用段只记「首次见到的 (进程,远端) 组合」，而这里还记录状态变化，
-    # 因为 SynSent -> Established 的转变本身就能证明连接确曾发生。
-    if ($targetIps.Count -gt 0) {
+    # ★ 2026-09-15 实测依据（性能）：
+    #     Get-NetTCPConnection 每次约 213 ms（走 CIM/WMI）
+    #     netstat -ano          每次约 19 ms（原生程序）
+    #   11 倍差距直接决定采样率：195 ms vs 30 ms。样本从进程出现到弹窗
+    #   只活 2.09 秒，采样点越多越不容易漏掉短命连接。
+    #
+    # ★ 归属问题：上一轮只抓到 TimeWait 残影，OwningProcess 显示为
+    #   Idle(PID 0)，无法归属。netstat -ano 直接给出 PID，且在
+    #   Established 状态下有效。所以优先用 netstat，并显式标注归属状态。
+    #
+    # 独立去重表 $seenTarget：原先与通用网络段共用 $seenConns，可能互相遮盖。
+    # 复用 3 段已抓取的 $nsSnapshot，不再二次调用 netstat。
+    if ($targetIps.Count -gt 0 -and $nsSnapshot) {
         try {
-            Get-NetTCPConnection -ErrorAction SilentlyContinue |
-                Where-Object { $targetIps -contains $_.RemoteAddress } |
-                ForEach-Object {
-                    $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
-                    $pn = if ($p) { $p.ProcessName } else { "?" }
-                    $key = "tgt|$pn|$($_.RemoteAddress):$($_.RemotePort)|$($_.State)"
-                    if (-not $seenConns.ContainsKey($key)) {
-                        $seenConns[$key] = $true
-                        W "[IP] 目标 IP 连接: $pn -> $($_.RemoteAddress):$($_.RemotePort)  state=$($_.State)"
+            $needles = $targetIps | ForEach-Object { "$_`:" }
+            foreach ($line in $nsSnapshot) {
+                $hit = $false
+                foreach ($n in $needles) { if ($line -match [regex]::Escape($n)) { $hit = $true; break } }
+                if (-not $hit) { continue }
+
+                $s = ($line -replace "\s+", " ").Trim()
+                # 期望：TCP 本地:端口 远端:端口 STATE PID
+                if ($s -notmatch '^TCP\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)') { continue }
+                $localEp = $Matches[1]; $remoteEp = $Matches[2]
+                $state = $Matches[3]; $roPid = [int]$Matches[4]
+
+                $key = "$remoteEp|$state|$localEp"
+                if ($seenTarget.ContainsKey($key)) { continue }
+                $seenTarget[$key] = $true
+
+                $pn = "?"
+                $note = ""
+                if ($roPid -gt 0) {
+                    if ($procMap.ContainsKey($roPid)) {
+                        $pn = $procMap[$roPid].ProcessName
+                    } else {
+                        $note = " [进程已退出]"
                     }
+                } else {
+                    $note = " [归属丢失]"
                 }
-        } catch { }
+                $tag = switch -Regex ($state) {
+                    "ESTABLISHED" { "★连接已建立" }
+                    "SYN_SENT"    { "★正在建连" }
+                    "TIME_WAIT"   { "(残影)" }
+                    default       { "" }
+                }
+                W "[IP] 目标 IP: $pn(pid=$roPid) -> $remoteEp  state=$state $tag$note"
+            }
+        } catch { W "WARN: 目标 IP 检测失败: $($_.Exception.Message)" }
     }
 
     # --- 3c. DNS 缓存差分 ---
@@ -278,7 +326,12 @@ for ($i = 0; $i -lt $Seconds; $i++) {
     #   （Enabled=False，被禁用）。
     #   改用 user32 EnumWindows，枚举全部顶层窗口。
     try {
-        foreach ($w in [KsWinEnum]::All()) {
+        $allWins = [KsWinEnum]::All()
+        if ($i -eq 0) {
+            $visTitled = ($allWins | Where-Object { $_[2] -eq "True" -and $_[5] -ne "" }).Count
+            W "[诊断] 首次窗口枚举: 顶层窗口=$($allWins.Count) 可见且有标题=$visTitled"
+        }
+        foreach ($w in $allWins) {
             $wpid = [int]$w[0]
             $vis  = $w[2]
             $en   = $w[3]
@@ -295,8 +348,7 @@ for ($i = 0; $i -lt $Seconds; $i++) {
                         ($t -match 'KeySteam') -or ($t -match '验证')
 
             $pn = "?"
-            $p = Get-Process -Id $wpid -ErrorAction SilentlyContinue
-            if ($p) { $pn = $p.ProcessName }
+            if ($procMap.ContainsKey($wpid)) { $pn = $procMap[$wpid].ProcessName }
             $fromWatched = Test-Watched $pn
 
             if (-not ($critical -or $fromWatched)) { continue }
@@ -330,6 +382,11 @@ for ($i = 0; $i -lt $Seconds; $i++) {
     # --- 6. 插件目录变化（样本 cleanup 逻辑的信号）---
     # 用哈希而不是 mtime：删除与改写都要能判读，
     # 且样本可能用「先删再写」的方式清理，mtime 分辨不出。
+    #
+    # ★ 2026-09-15 性能：本段每次约 12 ms（5 文件哈希），改低频执行
+    #   （每 3 轮一次，紧循环下约 700 ms 间隔）。删除检测对延迟不敏感——
+    #   判读用的是「是否发生」而非「精确到毫秒的时刻」。
+    if (($i % 3) -eq 0) {
     if (Test-Path $StubDir) {
         $now = @{}
         Get-ChildItem -Path $StubDir -File -ErrorAction SilentlyContinue | ForEach-Object {
@@ -353,6 +410,7 @@ for ($i = 0; $i -lt $Seconds; $i++) {
     } elseif ($stubBase.Count -gt 0) {
         W "插件目录整目录消失: $StubDir"
         $stubBase.Clear()
+    }
     }
 
     # --- 7. 主号目录写入监控（主号保护的实测验证）---
