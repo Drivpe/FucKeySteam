@@ -1,0 +1,342 @@
+# `_integrity_runtime_supported()` 返回值外部可观测性调查
+
+对象：`_re/bin/main.dll`（31,088,128 B，PE32+ x64，Nuitka onefile 业务模块）
+方法：纯静态。`.rdata` 常量表逐字节解析（Nuitka 编码还原）+ 节表偏移换算。**未运行样本、未执行 host.exe、未修改任何文件。**
+
+节表基准与换算：
+```
+.text   VA=0x1000      off=0x400       vsz=0x143b388
+.rdata  VA=0x143d000   off=0x143b800   vsz=0x9104a8
+ImageBase = 0x180000000
+main.dll 文件偏移 = rdata.bin 偏移 + 0x143b800
+VA              = rdata.bin 偏移 + 0x143d000
+```
+
+---
+
+## 结论摘要（先行）
+
+1. **样本不暴露 Python 层注入钩子。** `sitecustomize` / `usercustomize` / `PYTHONSTARTUP` / `._pth` / `sys.addaudithook` 全域**零命中**。唯一 `PYTHONPATH` 命中属 CPython `keyword.py` 自带 docstring。
+2. **`_integrity_runtime_supported()` 的返回值没有任何外部可观测差异。** 五条候选链路（磁盘写、模块集合、网络、UI 门控、进程守护）全部与它解耦。
+3. **payload 目录修改不触碰签名校验。** 但 `RuntimeGuard` 的注入检测会扫描进程模块——好在存在 `temp_rule=False` 跳过开关，且 docstring 明确 onefile 的 DLL 天然全在 `%TEMP%`。
+4. **旧探针失败原因 = (b) 路径硬编码失效。** 已确证硬编码的解包目录不存在。
+5. **结论：缺口不能通过"观测返回值"闭合。** 该函数是纯判定，无副作用，其返回值只影响一条**进程内不可见**的短路。最接近的替代判据见第 5 节。
+
+---
+
+## 第 1 问：样本是否暴露可注入的钩子
+
+**结论：不暴露。** 样本自身对 CPython 导入系统**零布防、零利用**。
+
+### 1.1 零命中项（决定性否定证据）
+
+以下字符串在 `rdata.bin`（9,504,256 B 全节）与 `text.bin`（21,214,208 B 全节）中**均为 0 次命中**：
+
+| 字符串 | rdata 命中 | text 命中 | 含义 |
+|---|---|---|---|
+| `sitecustomize` | 0 | 0 | Python 启动自动 import 钩子 |
+| `usercustomize` | 0 | 0 | 同上（用户级） |
+| `PYTHONSTARTUP` | 0 | 0 | 交互启动脚本环境变量 |
+| `._pth` | 0 | 0 | 嵌入解释器路径配置 |
+| `python._pth` | 0 | 0 | 同上 |
+| `sys.addaudithook` | 0 | 0 | Python 层审计钩子 |
+
+**判读**：`sitecustomize`/`usercustomize` 零命中，说明样本既没有**建立**这个钩子（防御），也没有任何代码**依赖**它（这本来也不可能，因为 Nuitka 冻结模块优先于 `sys.path`）。同时 `sys.addaudithook` 零命中意味着样本**没有在 Python 层布设审计防线**。
+
+### 1.2 唯一 `PYTHONPATH` 命中——非样本自身
+
+```
+rdata.bin off=0x40c03b  PYTHONPATH
+上下文：Keywords (from "Grammar/python.gram") ... PYTHONPATH=Tools/peg_generator python3 -m pegen.keywordgen
+```
+属 CPython 自带 `Lib/keyword.py` 的自动生成注释。**与样本代码无关。**
+
+### 1.3 `sys.settrace` / `setprofile` 命中全部归属 CPython `threading`
+
+| 字符串 | 命中偏移 | 归属 |
+|---|---|---|
+| `sys.settrace` | `0x5fcb30`, `0x5fccbe` | CPython `threading.py` |
+| `sys.setprofile` | `0x5fc7bc`, `0x5fc953` | CPython `threading.py` |
+| `threading.settrace` | `0x5fcdb9` | CPython `threading.py` |
+| `settrace`（裸词） | `0x5fc636`…（共 7 处）| CPython `threading.__all__` 与 `Trace.runctx` |
+| `setprofile`（裸词） | `0x5fc62a`…（共 6 处）| CPython `threading` |
+
+**判读**：全部落在 `threading` 模块常量区（`0x5fc600`–`0x5fd000`），**无一处属样本自身**。样本未注册追踪/剖析钩子。
+
+### 1.4 `atexit` 命中全部归属标准库与第三方包
+
+22 处命中（`0x1ab8dc`、`0x1ae14b`、`0x4334d3`、`0x49f016`、`0x4a1530`、`0x4a15b5`、`0x5526b5`、`0x60ac07`、`0x60ac90`、`0x60acdd`、`0x60ad2b`、`0x60ad68`、`0x60b0b3`、`0x6a01a2`、`0x6a01f4`、`0x6a0266`、`0x6a0451`、`0x6a0d1d`、`0x6a0e0e`、`0x7b1c0d`、`0x7c9497`）全部属 CPython 标准库或 `certifi` / `tornado`。样本自身零 `atexit.register`。
+
+### 1.5 无自建插件/扩展加载点
+
+`plugin` 命中 7 处（`0x7610863`=0x7422af 邻域、`0x83bxx` 起 6 处）全部属 PyQt6 / curl_cffi 包常量，无样本自定义 plugin 目录扫描。
+
+### 1.6 反向发现：样本**主动检测** hook 注入（但不在完整性自检链）
+
+`src.security.runtime_guard` 存在 `_KNOWN_HOOK_FILE_NAMES`（`rdata.bin` off=`0x896372`），值集在 `0x897111`–`0x8972e5`，**34 项 basename**：
+
+```
+xinput1_4.dll  xinput1_3.dll  xinput9_1_0.dll  xinput.dll
+version.dll    winmm.dll      winmmbase.dll    d3d9.dll
+d3d11.dll      dinput8.dll    dinput.dll       wsock32.dll
+minhook.dll    minhook.x64.dll detours.dll     mhook.dll
+easyhook.dll   easyhook32.dll easyhook64.dll  frida-agent.dll
+frida-gadget.dll frida-core.dll frida-gum.dll  scyllahide.dll
+blackbone.dll  blackbone32.dll blackbone64.dll injector.dll
+inject.dll     hook.dll       h.dll            overlay.dll
+reshade.dll    reshade64.dll
+```
+
+检测机制：`psutil.Process(pid).memory_maps()`（`0x89644a`/`0x896453`）取模块列表，按路径 + basename 字符串分类。**不依赖任何 PE/IAT 解析**——`EnumProcessModules` 全域 **0 命中**。
+
+**重要**：`CreateToolhelp32Snapshot`（`0x8b5e09`）/ `Module32FirstW`（`0x8b5f41`）确实存在，但归属 `TanuShikiLaunchService` 的 Steam 进程枚举 + 远程注入链（同区有 `CreateRemoteThread`/`VirtualAllocEx`），**与完整性自检和 RuntimeGuard 均无关**。
+
+---
+
+## 第 2 问：返回值可否从外部推断
+
+**结论：不能。该函数是纯判定，无副作用，返回值不改变任何外部可观测行为。**
+
+### 2.1 函数结构还原
+
+`IntegrityService` 类常量序列（`rdata.bin` off=`0x893c89`–`0x8941f4`）：
+
+```
+uIntegrityService.__init__
+uIntegrityService._public_key_configured
+uIntegrityService._entry_path
+uIntegrityService._running_from_python_source
+uIntegrityService._integrity_runtime_supported   ← off=0x893f6e
+uIntegrityService._current_executable_path
+uIntegrityService._load_local_signature
+uIntegrityService._build_tampered_result
+uIntegrityService._verify_local_signature
+uIntegrityService._verified_manifest_from_source
+averify_local_installation                       ← off=0x8941d9（唯一公开入口）
+uIntegrityService.verify_local_installation
+```
+
+`_integrity_runtime_supported` 的判定依据（off=`0x893f40` 相邻序列）：
+
+```
+aPath  aargv  aresolve  asuffix  astrip  acasefold
+P\x02u.py\x00u.pyw\x00        ← ('.py','.pyw') 元组
+a_running_from_python_source
+```
+
+即 `_integrity_runtime_supported() = not _running_from_python_source()`，
+而 `_running_from_python_source()` 等价于 `Path(sys.argv[0]).resolve().suffix.strip().casefold() in ('.py','.pyw')`。
+
+### 2.2 DISABLED 与 TAMPERED 的副作用对比
+
+| 行为 | DISABLED（返回值 False） | TAMPERED（返回值 True 且验签失败） |
+|---|---|---|
+| 构造 `IntegrityCheckResult` | 是（`state/source/reason` 三字段，off=`0x8937a5`/`0x8937ac`） | 是 |
+| `is_integrity_locked` 置位 | **否** | 是（`0x8765bd`，经 `_emit_integrity_lock`@`0x8768b0`） |
+| 写日志 | **否** | 是（`log_divider`@`0x8769a2`） |
+| 弹窗 | **否** | 是（`show_tamper_warning`@`0x87691f`） |
+| 写盘 | 否 | 否 |
+| 网络请求 | 否 | 否 |
+
+**关键陷阱**：存在两套同名但独立的枚举，混用会误判：
+
+```
+IntegrityState      off=0x89348a  值：CLEAN/TAMPERED/SKIPPED/VERIFIED/INVALID（大写，0x89349a 起）
+RemoteManifestState off=0x8934ab  值：disabled/clean/tampered/skipped/verified/unreachable/invalid（小写，0x893ca9 起）
+```
+
+### 2.3 五条候选链路逐一核验——全部「未发现差异」
+
+1. **`verification.cache`（魔数 KSTK）**——无差异。魔数 `cKSVC`@`0x89921a` / `cKSTK`@`0x899221` / `cKSFR`@`0x899228`；文件名 `uverification.cache`@`0x898e3f`。唯一写点 `save_verification_ticket`@`0x88ff33`（文案 `u写入验证票据缓存失败：`@`0x88ff71`），属验证码校验流程。在 `MainWindow` 导入表中，`verification_cache`@`0x871891` 与 `integrity_service`@`0x8717b1` 是**同层并列独立导入**，非互斥分支。
+2. **`first_run.cache`（魔数 KSFR）**——无差异。`_FIRST_RUN_MAGIC`@`0x898df9`、`_FIRST_RUN_MARKER`@`0x898e0b`。`MainWindow` 构造期**无条件**调用 `has_first_run_ack`（`0x86e423`、`0x87179e`），早于且独立于 `_initial_integrity_result`@`0x876320`。注：`shiki.json` 全库**零命中**（未能在本样本中确证该文件名存在）。
+3. **Lua 脚本生成**——无差异。属独立模块 `src.client.file_processor`@`0x851aac`：`_write_ks_file`@`0x8511f4`、docstring `下载并解开外层加密的 .qwq，将结果原样保存为 .ks`@`0x851ab4`。`integrity_service` 常量池（`0x89298b`–`0x893419`）**不含任何 lua 符号**。
+4. **进程内模块集合**——无差异，且有结构性反证。`cryptography.hazmat.primitives.asymmetric.ed25519`@`0x892d0e` 与 `Ed25519PrivateKey/PublicKey`@`0x892d43`/`0x892d56` 同在 `executable_signature` 子模块的**模块级 import** 常量池内，早于任何函数调用执行，不受该返回值影响。
+5. **网络请求**——无差异。`_run_startup_remote_manifest_check_async`@`0x876a44` 在启动流程**无条件调度**（`0x876794` 邻域）。`verify_remote_manifest_async`@`0x893936` 与本地校验链**并列存在**，非择一。注：`version.json` / `cdn.jsdelivr.net` 在 rdata 中**零命中**，实际符号为 `src.client.update_service`@`0x871664`、`AppUpdateInfo`@`0x871681`、`official_dynamic_url`@`0x893a58`（域名值经 `obfuscated_strings` 混淆）。
+
+### 2.4 消费链还原
+
+`MainWindowController.__init__` 序列（off=`0x8762df` 起）：
+
+```
+aIntegrityService → a_integrity_service → averify_local_installation
+→ a_initial_integrity_result
+→ aRuntimeGuard → a_on_runtime_tamper → aon_tamper → a_runtime_guard
+→ athreading → aRLock → a_remote_manifest_state_lock ...
+```
+
+`MainWindow` 侧（off=`0x86bf96`）：
+
+```
+_apply_integrity_result(initial_integrity_result) → is_integrity_locked → start_runtime_guard
+```
+
+`_verification_gate_allows`（`0x87ccc4`，返回 `IntegrityCheckResult | None`@`0x87cd06`）：
+- 返回 `None` → 放行
+- 返回 `is_tampered=True` → 触发 `show_tamper_warning` 并短路后续 `verify_ticket`@`0x876934` / `load_verification_ticket`@`0x876943`
+- **该函数既无写盘也无网络**，依赖链全为只读（`load_verification_ticket` 读 + `verify_ticket` 纯计算验签）
+
+**判读**：`_integrity_runtime_supported()` 返回 False 时，仅仅是让 `verify_local_installation` 内部**跳过一次 Ed25519 签名比对**，不改变任何一步 I/O。这条短路在进程外**不可见**。
+
+---
+
+## 第 3 问：pyd 注入的可行性与「不改样本」边界
+
+### 3.1 payload 目录修改是否等同于修改样本
+
+**结论：不等同于修改原始样本字节，但会落入 RuntimeGuard 的扫描面。**
+
+判断依据分三层：
+
+**第一层——签名覆盖范围。** `hash_file_prefix_sha256(path, prefix_size)` 的唯一调用点在 `_verify_local_signature`（off=`0x1cceeec`），哈希对象是 `_current_executable_path()` 解析出的 `KeySteam.exe`。`signature_facts.md` 已实测：
+```
+sha256(KeySteam.exe[:30884864]) == "4281bac40599..." == signature.body_sha256   ✅ MATCH
+main.dll 尾部 64 B 全 00（无 trailer）
+```
+**payload 目录内的任何文件都不参与签名哈希。** 修改 payload 里的 `.pyd` 不会导致 `body_sha256` 失配。
+
+**第二层——`main.dll` 自身不被签名覆盖。** `INTEGRITY_TARGET_MAIN_EXECUTABLE`（rdata off=`0x893af7` 邻域）只是候选路径的 `prioritized` 标识，`_current_executable_path` 的候选列表以 `KeySteam.exe`（`uKeySteam.exe`@`0x893c16`）优先。
+
+**第三层——RuntimeGuard 的模块扫描。** 这是真正的风险点。`RuntimeGuard._scan_self_and_raise`（`0x896920`）周期性调用 `psutil.Process(pid).memory_maps()`，按四类规则分类：
+
+| 原因键 | 偏移 | 触发条件 |
+|---|---|---|
+| `_INJECTION_REASON_HOOK` | `0x89638a` | basename 命中 34 项钩子 DLL 名单 |
+| `_INJECTION_REASON_TEMP` | `0x8963ae` | 模块从临时目录加载 |
+| `_INJECTION_REASON_USER_DIR` | `0x8963db` | 模块从非可信用户目录加载 |
+| `_INJECTION_REASON_EXE` | `0x8963ff` | 异常进程镜像映射 |
+
+**这里是决定性的缓解证据。** `runtime_guard` 模块 docstring（`rdata.bin` off=`0x8964b0`，明文 UTF-8）明确写道：
+
+> 返回目标进程加载的可疑模块（路径，原因）。
+>
+> ``temp_rule=False`` 时跳过"临时目录加载"判定：**onefile 程序的正规 DLL 全部位于 %TEMP% 解压目录**，无法确认目标进程解压目录时该规则不可靠，**只保留钩子名/异常 exe 映射等明确注入特征**。
+
+即：**样本作者已知 onefile 的 DLL 天然全在 `%TEMP%`，因此主动把 `temp_rule` 设计成可关闭的，并声明该规则"不可靠"。** payload 目录位于 `%TEMP%` 下属于 onefile 的正常形态，不构成注入证据。
+
+**残余风险**：`_classify_module`（`0x896486`）的 `strict` 模式（`0x896c55`）与 `temp_rule` 默认值的**字面量锚点未在常量侧找到**，因此"默认是否开启 temp_rule"**未能确证**。文档措辞倾向于关闭，但未取得代码级证据。
+
+同时注意：RuntimeGuard **不写盘、不联网**（窗口 `0x8961e0`–`0x897df1` 内 `write_text`/`write_bytes`/`requests`/`socket`/`POST` 全 0 命中，唯一 `open` 命中 `0x8967d2` 经核验是 `Popen` 子串）。跨进程仅走命名管道 `\\.\pipe\keysteam_guard_`@`0x897062` + 环境变量 `KEYSTEAM_WATCHDOG_SECRET`@`0x89702b`。
+
+### 3.2 反向发现：`RuntimeGuard` 自身也做 `.py` 后缀判定
+
+`runtime_guard` 常量块（`0x896216`–`0x897852`）内，`_frozen_runtime_supported`（`0x896695`）之前紧邻：
+
+```
+0x8965f9  aargv   0x8965ff  aresolve   0x896608  asuffix
+0x896612  u.py    0x896617  u.pyw
+0x89661d  a_on_tamper ... 0x896695  a_frozen_runtime_supported
+```
+
+与 `IntegrityService._running_from_python_source` **完全同构**。这暗示：宿主若让 `argv[0]` 以 `.py` 结尾，**RuntimeGuard 也会一并走「源码运行」降级路径**，而非独立触发注入警报。这**降低了** pyd 注入之外的旁路风险，但也**未能确证** `RuntimeGuard.start()` 是否据此提前返回（见 5.3）。
+
+---
+
+## 第 4 问：旧探针为何失败
+
+**结论：(b) 路径硬编码失效。** 证据确凿。
+
+| 探针 | 硬编码路径 | 行号 |
+|---|---|---|
+| `probe.py` | `DLL = r"C:\Users\Hidriver\AppData\Local\Temp\onefile_30472_056169_vA6cakJs2g8\main.dll"` | 第 6 行 |
+| `getobf.py` | `D = r"...\onefile_30472_056169_vA6cakJs2g8"` | 第 6 行 |
+| `readobf.py` | `D` 同上 | 第 6 行 |
+| `entry.py` | `D` 同上 | 第 6 行 |
+| `load.py` | `D` 同上 | 第 6 行 |
+| `winhost.py` | `D` 同上 | 第 6 行 |
+| `winhost2.py` | `D` 同上 | 第 2 行 |
+| `drive.py` | `D` 同上 | 第 6 行 |
+
+**实测该目录已不存在**：
+```
+$ ls /mnt/c/Users/Hidriver/AppData/Local/Temp/ | grep -i onefile
+（无输出，exit 1）
+```
+`Temp/` 下仅剩 `$RECYCLE.BIN` 与 `.GamingRoot`。Nuitka onefile 的解包目录带随机后缀（`onefile_<pid>_<hex>_<rand>`），每次启动重新生成、退出即删除——**该路径本质上不可硬编码**。
+
+### `probe.json` 的 traceback 恰好印证了这一点
+
+```json
+"outer": "Traceback (most recent call last):
+  File \"C:\\Users\\Hidriver\\AppData\\Local\\Temp\\ks_re\\probe.py\", line 12, in <module>
+    m = importlib.util.module_from_spec(spec)
+  File \"<frozen importlib._bootstrap>\", line 810, in module_from_spec
+AttributeError: 'NoneType' object has no attribute 'loader'"
+```
+
+`spec_from_file_location("ks_main", DLL)` 在**目标文件不存在**时返回 `None`，于是 `module_from_spec(None)` 抛 `'NoneType' object has no attribute 'loader'`。这是路径失效的**直接指纹**。
+
+同时探针的 fallback 分支（纯 `winreg`/`socket`/`uuid` 复刻 machine_id）**成功执行了**——`probe.json` 里的 `raw` 与 `variants` 字段有完整输出。这反证 (c) 权限/时序**不是**失败原因：同一脚本在同一环境下能正常读写文件和注册表。
+
+### `obf.json` 为空的原因
+
+`obf.json` = `{"entries": []}`，来自 `readobf.py` 第 6 行的同一个失效路径：
+
+```python
+data = open(os.path.join(D, "main.dll"), "rb").read()   # D 不存在 → 此处本应抛异常
+```
+
+但 `readobf.py` 的输出是**空列表而非异常**，说明它要么未走到该行，要么 `entries` 正则在空/错位数据上无匹配。结合 `probe.json` 证明同环境可正常执行，**失败原因仍是 (b)**，不是 (a) 技术路径不成立——事实上本报告已证明静态路径完全可行（只是不需要导入、只需解析常量表）。
+
+---
+
+## 第 5 问：结论——缺口能否闭合
+
+### 5.1 直接回答
+
+**不能通过"观测 `_integrity_runtime_supported()` 返回值"闭合。**
+
+阻断点是一句话可概括的：**该函数是纯判定函数，无副作用、无日志、无 I/O、无信号发射；它的返回值只在一条进程内的短路中被消费，而该短路的两条分支在进程外产生的可观测行为完全相同。**
+
+证据链：
+- 函数体只有 `argv/resolve/suffix/casefold` + 元组成员判定（off=`0x893f40`）
+- DISABLED 分支只构造一个三字段 dataclass（`state/source/reason`，off=`0x8937a5`）
+- 五条候选可观测链路全部与该返回值解耦（第 2.3 节）
+- `_verification_gate_allows` 本身也既无写盘也无网络（第 2.4 节）
+
+### 5.2 现有的否定证据为什么不够强
+
+当前唯一依据是「**没有出现 `倒卖可耻` 弹窗**」。这是**否定证据**，其弱点在于：
+
+`show_tamper_warning` 只在 `_verification_gate_allows` 返回 `is_tampered=True` 时触发，而**触发它需要同时满足**：
+1. `_integrity_runtime_supported()` 为 True（即未走源码运行分支），**且**
+2. 本地 Ed25519 验签失败，**且**
+3. 远程清单回查也判定 TAMPERED（`RemoteManifestState` 而非 `UNREACHABLE`/`INVALID`）
+
+不弹窗**可能**是因为走了 DISABLED 分支，也**可能**是因为签名意外验通过、或远程回查走了 `UNREACHABLE` 分支（`RemoteManifestState` 含独立的 `unreachable`/`invalid` 值，off=`0x893ce7`/`0x893cf4`）。**「不弹窗」无法区分这三种情况。** 所以它确实不足以作为正向判据。
+
+### 5.3 最接近的替代观测
+
+按证据强度排序，三条候选：
+
+**候选 A（最强，但需运行期，超出「静态」范围）——同构判定的旁证**
+
+`RuntimeGuard._frozen_runtime_supported`（`0x896695`）与 `IntegrityService._running_from_python_source` 使用**同一组常量**（`argv`/`resolve`/`suffix`/`.py`/`.pyw`，off=`0x8965f9`–`0x896617`）。若能在运行期观察到 RuntimeGuard **未启动看门狗子进程**（无 `--watchdog`@`0x8967e2` 子进程、无 `\\.\pipe\keysteam_guard_` 管道），即可**间接**证明该 `argv[0]` 后缀判定为真——从而同时证明 `_integrity_runtime_supported()` 为 False。
+
+**这比「没弹窗」强得多**：它观测的是一条**主动行为的有无**（子进程创建 + 命名管道监听），而非被动告警的缺失。
+
+**未能确证项**：`RuntimeGuard.start()` 内部是否真的以 `_frozen_runtime_supported()` 为提前返回条件，未取得代码级证据。常量表只能证明该判定函数存在且与 `.py/.pyw` 同构，**不能证明它与 `start()` 的控制流绑定**。这一条需反汇编 `RuntimeGuard.start`（`0x89758b` 对应的代码体）才能定论。
+
+**候选 B（中等）——`.pyd` 侧信道**
+
+`_ctypes.pyd`（payload 目录，116,224 B）存在于 `python312.dll` 的导入解析路径上。若在 payload 副本内替换该文件并让其中一段代码把 `sys.argv[0]` 的解析结果写入 payload 目录外的临时文件，即可直接读出该判定的输入。**但**：
+- 这**修改了 payload**（虽不影响 `KeySteam.exe` 的 `body_sha256`，见 3.1）
+- 会新增一个模块映射，可能触发 `_INJECTION_REASON_*`（`temp_rule` 的默认值**未能确证**）
+- 强于候选 A 之处在于直接读出 `bool`；弱于候选 A 之处在于引入了新的可检测面
+
+**候选 C（最弱，但零改动）——磁盘差异比对**
+
+`signature_facts.md` 已确认启动期 `%APPDATA%\Shikieiki\verification.cache`（605 B）存在。但因第 2.3 节已证明**五条磁盘链路全部与该返回值解耦**，此路径**不成立**——无法用磁盘 diff 区分 DISABLED 与 TAMPERED。列出仅为排除。
+
+### 5.4 一句话结论
+
+**这个缺口不能闭合。** `_integrity_runtime_supported()` 的返回值本身在进程外不可观测——它是纯判定，两条分支的外部行为完全一致。最接近的替代观测不是去盯返回值，而是去观测**与它同构的 `RuntimeGuard._frozen_runtime_supported` 判定所导致的副作用**：即「看门狗子进程与命名管道是否被创建」。这观测的是一条主动行为的有无，比「没出现 `倒卖可耻` 弹窗」这种否定证据强得多；但其前提（`RuntimeGuard.start()` 是否以该判定为提前返回条件）**未能确证**，需反汇编 `RuntimeGuard.start` 才能定论。
+
+---
+
+## 附：未确认项（诚实标注）
+
+1. **`integrity_clean_reason` 与 `INTEGRITY_LOCKED_MESSAGE` 的字面文本**——属 `obfuscated_strings` 表（`rdata.bin` off=`0x8944f0`–`0x894d40`）的 `_decode_segment(key_hex, encoded_hex)` 编码。已定位全部键名（`integrity_clean_reason`@`0x89526a`、`integrity_locked_message`@`0x895282`）与密钥表（`_MESSAGE_KEY_HEX`@`0x894c9e`，key=`bcb44307fc0935e7eaf24c4eae144189f2b6267cde6463c7`），但 XOR 组合（逐字节 / 循环 / ASCII 字符级）均未产出合法 UTF-8。**未能解出，不编造。**
+2. **`_classify_module` 的 `strict` / `temp_rule` 默认值**——无字面量锚点。文档措辞（`0x8964b0` docstring）明确 onefile DLL 全在 `%TEMP%` 且该规则"不可靠"，倾向默认关闭，但**未取得代码级证据**。
+3. **`RuntimeGuard.start()` 是否以 `_frozen_runtime_supported()` 为提前返回条件**——常量表仅证明该判定与 `.py/.pyw` 同构，**未证明控制流绑定**。
+4. **`shiki.json` / `version.json` / `cdn.jsdelivr.net`**——在 `rdata.bin` 中**零命中**。实际符号是 `src.client.update_service`、`AppUpdateInfo`、`official_dynamic_url`（域名值已混淆）。
+5. **HOOK 判定是否存在内存态 IAT 遍历**——常量侧零证据（`GetProcAddress`/`IAT`/`LoadLibrary` 在 `runtime_guard` 常量块内零命中）。
