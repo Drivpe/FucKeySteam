@@ -203,7 +203,8 @@ MainWindow._start_initialization
 
 `verification_cache_accepted`（`0x86d749`）与 `_continue_initialization`（`0x86d765`）
 是**配对的 pyqtSignal 与槽**，属 `MainWindow` 的**进程内**信号。
-**外部无法触发**——除非在样本进程内注入代码，而那会撞上 `RuntimeGuard` 的模块扫描。
+**外部无法触发**——除非在样本进程内注入代码，而那会面对 `RuntimeGuard` 的注入扫描
+（**该扫描有明确豁免**，见 `docs/suppressing-the-dialog.md` §2.2 的限定条件与 `docs/probe-injection.md` 的实测）。
 
 ### 闸门函数的位置
 
@@ -292,7 +293,8 @@ api-ms-win-crt-runtime/locale/heap/string/math/stdio/convert-l1-1-0.dll
    我们实测到的「主窗口 `enabled=False`」是 **Qt 内部状态在 Win32 层上的投影**，不是成因。
    进程外改 Win32 状态只改投影，不改本体。
 2. **`WH_CBT` / `SetWinEventHook` 触及不到 Qt 的模态判定逻辑**（后者在进程内事件分发层）。
-3. **`SetWindowsHookEx` 注入**同时撞两件事：进程内注入会触发 `RuntimeGuard` 的模块扫描；
+3. **`SetWindowsHookEx` 注入**同时面对两件事：进程内注入会进入 `RuntimeGuard` 的扫描范围
+   （**但该扫描对 onefile 形态显式跳过临时目录判定**，见 §2.2 的 docstring 原文）；
    且需理解 Qt 私有符号（`QApplicationPrivate` 是私有 API，Qt 亦为运行期 `LoadLibrary` 加载，
    不在任何导入表中）。
 
@@ -319,7 +321,8 @@ done
 连字符串都没有，说明该 API 根本不被调用。
 
 **最终判定**：「窗口层抑制」（进程外改窗口启用状态、`WH_CBT`、`SetWinEventHook` 等）
-**不可行**（除非在样本进程内注入，而那是另一回事且会触发 `RuntimeGuard`）。
+**不可行**（除非在样本进程内注入，而那是另一回事；注入会面对 `RuntimeGuard` 的扫描，
+但该扫描有明确豁免——见 §2.2）。
 
 ---
 

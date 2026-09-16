@@ -286,7 +286,7 @@ asetWindowFlag  aQt  aWindowType  aWindowContextHelpButtonHint
 | `SendMessage` / `PostMessage` 发 `WM_` 消息 | 是 | 同上 | **无效** —— 跨进程发送的**非自发事件**（`spontaneous()==false`）不走 QPA 鼠标/键盘处理路径，而 `blockedByModalWindow` 判定位于 `QGuiApplicationPrivate::processMouseEvent` 内，即只在平台事件入队路径上生效 | 不可行（但对「用 `PostMessage` 合成点击绕过 Qt 判定」的想法，**未取得源码级反证，标注为未确证**，见第六节） |
 | `SetWindowsHookEx(WH_CBT)` 的 `HCBT_CREATEWND` | **仅进程内** | 全局 hook 需在 DLL 中实现，且需同 session / 管理员 | **不可行** —— 见下 | 不可行 |
 | `SetWinEventHook` | 是（`WINEVENT_OUTOFCONTEXT` 可跨进程，hook 函数在本进程） | 无特殊权限（可只监听目标 pid） | **观测有效、干预无效** —— 它是**通知**机制，不提供阻止窗口创建的能力 | 不可行 |
-| `SetWindowsHookEx` 注入（`WH_CALLWNDPROC` / `WH_GETMESSAGE`） | 需把 hook 代码放进 DLL 并注入目标进程 | 管理员；跨位数限制 | 需进程内执行 + 需理解 Qt 私有符号 → 撞 `RuntimeGuard` | 不可行（且属改样本） |
+| `SetWindowsHookEx` 注入（`WH_CALLWNDPROC` / `WH_GETMESSAGE`） | 需把 hook 代码放进 DLL 并注入目标进程 | 管理员；跨位数限制 | 需进程内执行 + 需理解 Qt 私有符号；`RuntimeGuard` 的检测面存在明确豁免，**不宜笼统断言「必被发现」**（见 §2.2） | 不可行（且属改样本） |
 
 ### 2.1 `HCBT_CREATEWND` 能否阻止窗口创建
 
@@ -303,7 +303,10 @@ asetWindowFlag  aQt  aWindowType  aWindowContextHelpButtonHint
 也就是说：**机制上确实可以阻止窗口创建**。但部署条件使它在进程外不成立：
 
 - `WH_CBT` 要拦截**目标进程**创建的窗口，hook 过程必须在该进程内执行 —— Windows 只在 `SetWindowsHookEx` 的 **hook procedure 位于 DLL 中**时才把它注入其它进程（对 `WH_CBT` 等非 `WH_KEYBOARD_LL`/`WH_MOUSE_LL` 类型）。这意味着必须构造注入 DLL、需要管理员权限、并且 `SetWindowsHookExW` 在**整个 payload 中零命中**说明样本自身不做这事。
-- 即使成功注入，也会撞上 `RuntimeGuard`：`src.security.runtime_guard` 明确实现「注入扫描」（`_KNOWN_HOOK_FILE_NAMES`、`runtime_injected_module_message`、`_has_hard_injection`），发现可疑模块**直接 `_kill_main_process`**。相关字符串在 `0x896bd0`（`suspicious_modules_for` / `runtime_injected_module_message` / `_trigger_tamper` / `_request_watchdog_kill` / `_kill_main_process`）。
+- 即使成功注入，也**会进入** `RuntimeGuard` 的注入扫描范围：`src.security.runtime_guard` 实现了「注入扫描」（`_KNOWN_HOOK_FILE_NAMES`、`runtime_injected_module_message`、`_has_hard_injection`），命中可疑特征时会 `_kill_main_process`。相关字符串在 `0x896bd0`（`suspicious_modules_for` / `runtime_injected_module_message` / `_trigger_tamper` / `_request_watchdog_kill` / `_kill_main_process`）。
+
+  **但「会进入扫描范围」不等于「会被杀掉」**——该扫描有明确豁免，见下面的限定条件。
+  **不要把本句读成「注入必被发现」。**
 
   **限定条件（2026-09-16 补，来源有二）**：
 

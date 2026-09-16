@@ -21,6 +21,22 @@
 
 **最轻路径 = 外部宿主（`_re/…/host/host.exe`），不修改 `KeySteam.exe` 一个字节。**
 
+> **确证等级统一标注（2026-09-16 审查后补）**
+>
+> 上表四条判定的确证等级**并不相同**，`probe-index.md` 的汇总表也需按此读：
+>
+> | 判定 | 等级 |
+> | --- | --- |
+> | 替换 payload 目录 `main.dll` **无效** | **直接观测**（实测 `NUITKA_ONEFILE_DIRECTORY` 被忽略、样本仍新建 `onefile_*`） |
+> | 两个「已知阻碍」为假 | **直接观测**（导出表实测 `NumberOfFunctions=1`；两轮对照均进 `Nuitka_Main`） |
+> | 外部宿主**能加载并调用 `run_code`、驱动 GUI** | **直接观测**（`run_code @ 00007FF92333B380`、窗口与模块路径均经证据链确认） |
+> | 外部宿主**能消除弹窗** | **未确证** —— 本次加载的 DLL 只加了无害标记，**验证逻辑原封未动**；且 `RuntimeGuard.start()` 的控制流绑定亦未确证 |
+> | 解包链路闭合 | **直接观测**（117 条目、`main.dll` 逐字节一致） |
+> | 「改 `main.dll` 可行」 | **多层推断** —— 解包可信，但**压缩端无途径**（`7z a -tzstd` 返回 `E_NOTIMPL`），故「重打包」这一步从未真正走通 |
+>
+> **读法**：「外部宿主」这条路的**能力**已确证，「它能解决弹窗」这个**效果**未确证。
+> 两者的差别是本轮最容易误读之处。
+
 ---
 
 ## 子问题 1：改 `main.dll` 的可行性与后果
@@ -324,7 +340,26 @@ windows: [KeySteam 验证] [KeySteam v2.99]
 | --- | --- | --- |
 | 本地 trailer 签名 | `body_sha256` 对 `KeySteam.exe` 前 `body_size` 字节 | **否**——未改 `KeySteam.exe` |
 | 远程清单 `version.json` | `verify_remote_manifest_async`，回查 GitHub/jsDelivr | 未确证（依赖网络可达性） |
-| `RuntimeGuard` 模块扫描 | `_scan_self_and_raise` → `psutil.memory_maps()` 按 4 类规则分类 | **否**——实测无 `--watchdog` 子进程 |
+| `RuntimeGuard` 模块扫描 | `_scan_self_and_raise` → `psutil.memory_maps()` 按 4 类规则分类 | **未确证**——实测无 `--watchdog` 子进程，但**子进程缺席不能证明扫描未触发**（见下方注） |
+
+### 4.1.1 ⚠️ 「无看门狗子进程」是负观测，不能单独证明任何分支
+
+上表最后一行曾被写成「**否** —— 实测无 `--watchdog` 子进程」，
+**该推理不成立**：子进程缺席**至少有两个活解释**——
+
+1. 走通了 `.py` 降级路径，故未启动看门狗；
+2. 看门狗 **spawn 失败**（样本自身定义了 `_watchdog_failed` / `_restart_watchdog`
+   与「降级为仅自检模式」的状态）。
+
+**一个负观测若有两个活解释，就不能归属给其中任一个。**
+
+这与本仓库 drift 表已登记的一条**逐字同构**（`_frozen_runtime_supported` 那条：
+「一个缺失的看门狗进程不能证明 `.py` 后缀分支被走到」）。**同一错误在本轮第二次出现。**
+
+**因此该项的正确状态是「未确证」**，而不是「否」。
+判定 `.py` 降级路径是否被走通，**唯一有效证据是最终的弹窗行为**
+（`host.c` 的注释亦如此指明：「there is no intermediate state the host can inspect
+... The only evidence is the final dialog behaviour」）。
 
 ### 4.2 `_integrity_runtime_supported()` 的降级链（确证）
 
@@ -346,7 +381,10 @@ argv → resolve → _entry_path → suffix → strip → casefold → '.py' / '
 - **无** `--watchdog` 子进程（`Win32_Process` 查询父 PID 下仅有 `conhost.exe`）
 - **无**本进程新建的 `keysteam_guard_*` 管道
 
-这几项**主动行为的缺失**，共同指向 `.py` 降级路径被走通。
+这几项**主动行为的缺失**，与 `.py` 降级路径被走通**一致**——
+但**仅为一致，不构成确证**（见 §4.1.1：负观测有多个活解释，
+且 `RuntimeGuard.start()` 的控制流绑定本身未确证）。
+**判定该分支是否真的被走通，唯一有效证据是最终的弹窗行为。**
 
 ### 4.3 「不弹窗」作为判据的强度（诚实标注）
 
