@@ -2,23 +2,20 @@
 
 后续工单的验收需要跑样本（Windows 侧、需提权）。本文件说明如何让**非提权会话**触发提权探针。
 
-## 一次性安装（需要你手动做一次）
+## ✅ 已完成安装（2026-09-17）
 
-**以管理员身份运行**，任选其一：
+任务 `KS_Elevated_Probe` **已注册并端到端验证通过**：
 
 ```
-右键 REGISTER_ELEVATED_TASK.ps1 → 以管理员身份运行
+任务名:   KS_Elevated_Probe
+状态:     Ready
+运行身份: Hidriver
+运行级别: Highest
+动作:     ...\pwsh.exe
+参数:     -NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File "....\ks_elevated_run.ps1"
 ```
 
-或在管理员身份的 PowerShell 7 里：
-
-```powershell
-pwsh -File "D:\03_Work\03_Develop\KeySteam v2.99\_re\ghidra\REGISTER_ELEVATED_TASK.ps1" -Probe hwbp_ctrl
-```
-
-脚本会自我验证：注册后回查任务、打印状态与运行级别，确认 `RunLevel=Highest` 才算成功。
-
-**为什么必须手动**：任务注册本身需要管理员，而当前会话的令牌是非提升的（`Hidriver` 在 `Administrators` 组内，但 UAC 分离令牌下 `IsAdmin=False`）。这是先有鸡还是先有蛋——要建提权任务，得先提权。详见 `materials.md` §9 的实测记录。
+**端到端验证结果**（非提权会话触发、提权运行）：`_elev_run.log` 记录 `elevated=True`、退出码 0、耗时 40.15s；探针日志第 3 行 `priv=True`；`hwbp_ctrl` 命中 **423213** 次。**提权自动化成立。**
 
 ## 之后的用法（不再需要任何权限）
 
@@ -38,11 +35,50 @@ schtasks /Run /TN KS_Elevated_Probe
 - `_elev_run.log` —— 执行器汇总（时间戳、退出码、耗时、残留进程警告）
 - 探针自己的日志（如 `hwbpCtrl_q1.txt`）—— 照常由探针写
 
-## 两个必须知道的约束
+## 原始的一次性安装步骤（已执行，留作记录）
+
+**以管理员身份运行**：
+
+```
+右键 REGISTER_ELEVATED_TASK.ps1 → 以管理员身份运行
+```
+
+或在管理员身份的 PowerShell 7 里：
+
+```powershell
+pwsh -File "D:\03_Work\03_Develop\KeySteam v2.99\_re\ghidra\REGISTER_ELEVATED_TASK.ps1" -Probe hwbp_ctrl
+```
+
+脚本会自我验证：注册后回查任务、打印状态与运行级别，确认 `RunLevel=Highest` 才算成功。
+
+**为什么必须手动做这一步**：任务注册本身需要管理员，而当时的会话令牌是非提升的（`Hidriver` 在 `Administrators` 组内，但 UAC 分离令牌下 `IsAdmin=False`）。这是先有鸡还是先有蛋——要建提权任务，得先提权。详见 `materials.md` §9 的实测记录。**注册之后，这一步不再需要重复。**
+
+## 三个必须知道的约束
 
 **其一：探针要求交互式桌面。** 任务以 `LogonType Interactive` 注册，只在**当前用户已登录**时可用。这是有意的——探针要能看见窗口才能观测弹窗，跑在无桌面的会话里观测不到。
 
 **其二：非提权运行会产生误导性结果。** 非提权下样本会在约 2 秒后崩于 `0xc0000005`（空指针），日志看起来"跑了但没结果"。执行器因此带**提权闸**：非提权时立即退出（退出码 1），不做任何事。**不要绕过它。**
+
+**其三：`_elev_run.log` 是共享的。** 多个并发运行会写同一个文件。触发前先清、跑完立刻读，并核对时间戳。
+
+**其四：探针耗时差异极大，不要凭时间判断「挂住」。** 实测超时范围 **35 秒到 300 秒**（跨度近 9 倍）：
+
+- 最短：`zd_data` 35s、`hwbp*` 40s
+- 最长：`mydbg4` 300s、`mydbg2/3/5/6` 180–240s
+
+`mydbg3.py` 实测耗时 **240.11 秒**、退出码 0——曾因此被误判为「挂住」。
+
+**判断是否还在跑的可靠方法**（不要靠时间猜）：
+
+```bash
+# 任务状态：Running / Ready
+pwsh.exe -NoProfile -Command "(Get-ScheduledTask -TaskName 'KS_Elevated_Probe').State"
+
+# 日志：有 EXIT 行 = 已结束，无论耗时多久
+cat _elev_run.log
+```
+
+**有 `EXIT` 行 = 已正常结束。** 若 State=Running 但 `kshost`/`python` 进程都不存在了，那才是真挂了。
 
 ## 执行器的既有检查
 
@@ -56,8 +92,7 @@ schtasks /Run /TN KS_Elevated_Probe
 
 ## 与工单的关系
 
-- **工单 03/04/05/06 的验收**（日志对拍）依赖这套机制
-- **工单 01** 不需要它（纯静态查证 + Linux 侧位运算推演）
-- **工单 02** 不需要它（只改库、不跑样本）
-
-即：**安装可以在 02 进行的同时做，但必须在 03–06 开始前完成。**
+- **工单 03/04/05/06 的验收**（日志对拍）依赖这套机制 —— **已解锁**
+- **工单 08**（分离零命中解释）同样依赖 —— **已解锁**
+- **工单 01 已完成**，不需它
+- **工单 02 已完成**，不需它
