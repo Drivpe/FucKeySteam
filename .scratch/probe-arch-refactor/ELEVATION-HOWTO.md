@@ -19,21 +19,38 @@
 
 ## 之后的用法（不再需要任何权限）
 
-```powershell
-# 1. 指定本次要跑的探针（探针名不含扩展名，第二行是日志 tag）
-Set-Content -Path "D:\03_Work\03_Develop\KeySteam v2.99\_re\ghidra\_elev_job.txt" `
-            -Value @('hwbp_ctrl','q1') -Encoding ascii
+> **⚠ 关键：把三步放进同一条命令**
+>
+> 实测教训（2026-09-17，工单 08）：若在 `mv` 与触发之间隔一次 WSL→Windows 调用，
+> 任务启动可能有**约 90 秒延迟**，期间另一个调用方会覆盖 `_elev_job.pending`，
+> 导致你的运行被顶替。**一次实际发生过**（日志显示 `probe=mydbg3` 而非自己的探针）。
+>
+> **缓解方法**：把「写文件 + 重命名 + 触发」放进**同一条 `pwsh.exe -Command`**。
+> 工单 08 用此法后，后续 5 次触发全部一次成功。
 
-# 2. 触发
-Start-ScheduledTask -TaskName KS_Elevated_Probe
-# 或
-schtasks /Run /TN KS_Elevated_Probe
+```powershell
+# ✅ 推荐：一条命令完成，无窗口
+pwsh.exe -NoProfile -Command @"
+Set-Content -Path 'D:\03_Work\03_Develop\KeySteam v2.99\_re\ghidra\_elev_job_<你的id>.txt' -Value @('hwbp_ctrl','tag1') -Encoding ascii
+Move-Item -Force 'D:\03_Work\03_Develop\KeySteam v2.99\_re\ghidra\_elev_job_<你的id>.txt' 'D:\03_Work\03_Develop\KeySteam v2.99\_re\ghidra\_elev_job.pending'
+Remove-Item -Force -ErrorAction SilentlyContinue 'D:\03_Work\03_Develop\KeySteam v2.99\_re\ghidra\_elev_run.log'
+Start-ScheduledTask -TaskName 'KS_Elevated_Probe'
+"@
+```
+
+```bash
+# ❌ 反面例子：三步分开发，中间有窗口——曾导致运行被顶替
+printf 'zd_dlg\r\npre\r\n' > _elev_job_agent03.txt    # 在 WSL 里
+mv _elev_job_agent03.txt _elev_job.pending            # 在 WSL 里
+pwsh.exe -NoProfile -Command "Start-ScheduledTask ..." # 另一次调用
 ```
 
 结果落在两个地方：
 
 - `_elev_run.log` —— 执行器汇总（时间戳、退出码、耗时、残留进程警告）
 - 探针自己的日志（如 `hwbpCtrl_q1.txt`）—— 照常由探针写
+
+**读日志时必须核对 `RUN probe=` 行**，确认跑的是你自己的探针；不是就重跑。
 
 ## 原始的一次性安装步骤（已执行，留作记录）
 
