@@ -32,7 +32,7 @@ $p | Wait-Process -Timeout ($DurMs/1000 + 60) -ErrorAction SilentlyContinue
 W "=== bootinj output ==="
 if (Test-Path $out) { Get-Content $out | ForEach-Object { Write-Host $_ } }
 
-$ma = "D:\02_Games\01_Steam\Steam\userdata\1398488476"
+$ma = "D:\02_Games\01_Steam\Steam\userdata\<main-id>"
 W "main account files = $((Get-ChildItem $ma -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count)"
 W "stplug-in files = $((Get-ChildItem 'D:\02_Games\01_Steam\Steam\config\stplug-in' -File -ErrorAction SilentlyContinue | Measure-Object).Count)"
 

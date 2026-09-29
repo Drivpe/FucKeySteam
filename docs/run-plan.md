@@ -11,8 +11,8 @@
 - [x] 第三参数的真实语义已核实：**它不是环境块**，是 `main.dll` 的绝对路径宽字符串。`host.c` 已按此重写并重新编译通过。
       （早先按环境数组实现的版本已废弃——那个错误不会崩溃，只会静默产出垃圾路径。）
 - [x] **本机状态已实测记录**，取代原先「隔离环境」的空勾选框。本机**不是**隔离环境——它已经在运行同类工具（见下）。实测事实：
-      - 当前登录 `drivpe114514`（account_id `702986969`，userdata 816 K，小号）
-      - 主号 `zdk84214`（account_id `1398488476`，userdata 9.4 M）处于 `AutoLogin=0` 离线态
+      - 当前登录 `<alt-account>`（account_id `<alt-id>`，userdata 816 K，小号）
+      - 主号 `<main-account>`（account_id `<main-id>`，userdata 9.4 M）处于 `AutoLogin=0` 离线态
       - 三账号 `RememberPassword=1`，`ssfn*` 令牌文件 **0 个**
       - `HKCU\...\ActiveProcess\ActiveUser = 0x0`（无效值）
       - `loginusers.vdf` **无 `MostRecent` 字段**（三账号均无）
@@ -90,7 +90,7 @@ D:\02_Games\01_Steam\Steam\steam.exe.old         与在用 steam.exe 哈希不�
 **恢复命令**：
 ```bash
 cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shiki.kodo} \
-   /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/
+   /mnt/c/Users/<user>/AppData/Roaming/Shikieiki/
 ```
 
 
@@ -335,10 +335,10 @@ ls -la "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in"   # 期望 5 个文件
 
 # (b) 数据目录：从 baseline 副本恢复，逐个核对 md5
 cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shiki.kodo} \
-   /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/
-md5sum /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/*.cache \
-       /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/*.json \
-       /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/*.kodo
+   /mnt/c/Users/<user>/AppData/Roaming/Shikieiki/
+md5sum /mnt/c/Users/<user>/AppData/Roaming/Shikieiki/*.cache \
+       /mnt/c/Users/<user>/AppData/Roaming/Shikieiki/*.json \
+       /mnt/c/Users/<user>/AppData/Roaming/Shikieiki/*.kodo
 # 对照 _re/backup/BASELINE.txt
 ```
 
@@ -365,7 +365,7 @@ md5sum /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/*.cache \
 
 ```bash
 # 0. 确认监控脚本 BOM 完好、语法可用
-head -c 3 "/mnt/d/03_Work/03_Develop/KeySteam v2.99/_re/monitor_keysteam.ps1" | od -An -tx1   # 期望 ef bb bf
+head -c 3 "/mnt/d/03_Work/03_Develop/KeySteam-v2.99/_re/monitor_keysteam.ps1" | od -An -tx1   # 期望 ef bb bf
 powershell.exe -NoProfile -Command "\$e=\$null;[System.Management.Automation.Language.Parser]::ParseFile('D:\03_Work\03_Develop\KeySteam v2.99\_re\monitor_keysteam.ps1',[ref]\$null,[ref]\$e)|Out-Null;if(\$e.Count -eq 0){'SYNTAX OK'}"
 
 # 1. 重编宿主（不要相信仓库里的 host.exe —— 曾出现过与源码不同步的旧件）
@@ -382,7 +382,7 @@ ls -la "$DEST/stplug-in-initial-snapshot"   # 期望 5 个文件
 # 3. 记录起始时间（事后核对主号目录是否被写要用）
 date '+%Y-%m-%d %H:%M:%S' | tee "$DEST/start-time.txt"
 
-# 4. 确认 Steam 状态（每次运行前都手动退 Steam、重启、登录小号 drivpe114514）
+# 4. 确认 Steam 状态（每次运行前都手动退 Steam、重启、登录小号 <alt-account>）
 reg.exe query "HKCU\Software\Valve\Steam\ActiveProcess" /v ActiveUser
 # 期望：ActiveUser 非 0x0（登录后由 steam.exe 写入）。若仍是 0x0，
 # 样本会走「Steam 当前没有已登录用户」分支，本次运行的账号路径不可用于判读。
@@ -430,7 +430,7 @@ reg.exe query "HKCU\Software\Valve\Steam\ActiveProcess" /v ActiveUser
 | **标题 `倒卖可耻` 的窗口** | **出现 ⇒ 完整性链被触发**。但**不立即判失败**——见下方「为什么不再把出现等同于失败」 |
 | `VerificationDialog`（无 × 的弹窗） | 记录，但**只作环境状态**——见下方归因限制 |
 | `config/stplug-in/` 目录变化 | 样本的清理逻辑是否触发（会删 `*.lua`/`*.ks`）。**记录删除发生的时刻**，它相对验证链早晚有判读价值 |
-| `userdata/1398488476/` 是否被写 | 主号保护的实际验证（预期：不写）。若出现 `!!! 主号目录…` 行，立即终止 |
+| `userdata/<main-id>/` 是否被写 | 主号保护的实际验证（预期：不写）。若出现 `!!! 主号目录…` 行，立即终止 |
 
 ### 为什么不再把 `倒卖可耻` 出现等同于失败（2026-09-15 修正）
 
@@ -506,14 +506,14 @@ Nuitka 的 C 运行时**没有**任何后缀分支。该判定位于**样本自�
    cp -a .scratch/stplug-in-backup-*/.. "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in/"
    ls -la "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in"   # 期望 5 个文件
 
-   # (b) 手动退 Steam → 重启 → 登录小号 drivpe114514（在 Windows 侧操作，不在 bash 里）
+   # (b) 手动退 Steam → 重启 → 登录小号 <alt-account>（在 Windows 侧操作，不在 bash 里）
    #     然后确认 ActiveUser 已非 0
    reg.exe query "HKCU\Software\Valve\Steam\ActiveProcess" /v ActiveUser
    ```
 
 2. 备份并移走缓存（备份已在 `_re/backup/Shikieiki_orig/`，此步可逆）：
    ```bash
-   mv /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/verification.cache \
+   mv /mnt/c/Users/<user>/AppData/Roaming/Shikieiki/verification.cache \
       /tmp/verification.cache.removed-$(date +%s)
    ```
 
@@ -544,7 +544,7 @@ Nuitka 的 C 运行时**没有**任何后缀分支。该判定位于**样本自�
 |---|---|---|---|
 | `verification.cache` | 存在（2026-09-13 20:26，605 B） | 移除 | **否——这是要变的变量** |
 | `first_run.cache` | 存在（2026-09-12 13:49，63 B） | 不变（首运行弹窗应不出现，这是范围边界） | 是 |
-| Steam 登录状态 | 手动启动并登录小号 `drivpe114514` | **同样手动启动并登录小号** | **是（2026-09-15 追加）** |
+| Steam 登录状态 | 手动启动并登录小号 `<alt-account>` | **同样手动启动并登录小号** | **是（2026-09-15 追加）** |
 | `config/stplug-in/` 内容 | 5 个脚本（跑前从备份恢复） | **跑前同样从备份恢复** | **是（2026-09-15 追加）** |
 | `--no-envp` / `--null-3rd` | 都不用（env 注入，第三参数传路径） | 都不用 | 是 |
 
@@ -662,7 +662,7 @@ cp -a "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in" \
 1. 恢复数据目录（若第 2 次运行移除了缓存）：
    ```bash
    cp _re/backup/Shikieiki_orig/verification.cache \
-      /mnt/c/Users/Hidriver/AppData/Roaming/Shikieiki/
+      /mnt/c/Users/<user>/AppData/Roaming/Shikieiki/
    ```
 2. 恢复 `config/stplug-in/`（见「跑之前必须做的一件事」）。
 3. 核对原始样本未被改动：
@@ -672,7 +672,7 @@ cp -a "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in" \
    ```
 4. 核对主号目录未被写入（主号保护的实测验证）：
    ```bash
-   find "/mnt/d/02_Games/01_Steam/Steam/userdata/1398488476" -newermt "<开跑时间>" -ls
+   find "/mnt/d/02_Games/01_Steam/Steam/userdata/<main-id>" -newermt "<开跑时间>" -ls
    # 预期：无输出
    ```
 5. 保留宿主 stdout/stderr 与监控日志，两者成对存档。

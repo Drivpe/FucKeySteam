@@ -210,13 +210,13 @@ strings -a "D:/02_Games/01_Steam/Steam/KeySteamTool.dll" | grep -iE 'KeySteam ve
 ### 2.2 坚果云同步 —— 无关联
 
 ```
-cloud_redirect_sync_path = C:/Users/Hidriver/Nutstore/1/我的坚果云/GameData
+cloud_redirect_sync_path = <SYNC_PATH>
 ```
 
 该目录全量枚举（递归）结果：**只有游戏存档 blob**，结构为
 
 ```
-GameData\702986969\<appid>\{blobs, cn.cloudredirect, file_tokens.cloudredirect, root_token.cloudredirect, state.cloudredirect}
+GameData\<alt-id>\<appid>\{blobs, cn.cloudredirect, file_tokens.cloudredirect, root_token.cloudredirect, state.cloudredirect}
 ```
 
 涉及的 appid：`1943950`(EscapeTheBackrooms)、`2060160`(TheFarmerWasReplaced)、`2161700`(P3R)、`246420`(kingdom_rush)、`3934270`(HowManyDudes)。
@@ -416,7 +416,7 @@ clean_steam_for_update          （0x87c34f）
 ```
 KeySteam 进程：CLEAN_NO_KEYSTEAM
 样本哈希：8f6dc31084888c64a7e442a91eeb51118dce051649a53076fa7412fc343d803a  ✓ 未修改
-userdata\1398488476：537 文件  ✓ 基线吻合
+userdata\<main-id>：537 文件  ✓ 基线吻合
 config\stplug-in：5 文件，本地备份 5 文件  ✓ 备份完好
 ```
 
@@ -690,4 +690,4 @@ _re/backup/round5-20260915-valid-ticket/verification.cache   有效票原件（B
 ```
 
 **样本哈希核验**：实验全程未修改样本，`KeySteam.exe` 保持 `8f6dc31084888c64a7e442a91eeb51118dce051649a53076fa7412fc343d803a`。
-**宿主完整性**：`userdata\1398488476` 537 文件、`config\stplug-in` 5 文件、`steam` PID 17888 —— 实验前后一致。
+**宿主完整性**：`userdata\<main-id>` 537 文件、`config\stplug-in` 5 文件、`steam` PID 17888 —— 实验前后一致。

@@ -15,14 +15,14 @@
 #                   「样本 cleanup 逻辑已触发」的直接信号，而删除操作事后
 #                   find 看不出来，必须实时观测。
 #   -MainAccountDir 主号目录写入监控（主号保护实测验证）。本轮约束是
-#                   「别动 zdk84214」，静态结论是不写，这条监控是对该结论
+#                   「别动 <main-account>」，静态结论是不写，这条监控是对该结论
 #                   的实测验证——写入则当场知道。
 param(
     [int]$Seconds = 60,
     [string]$DataDir = "$env:APPDATA\Shikieiki",
     [string]$LogDir  = "$env:TEMP\ks_re",
     [string]$StubDir = "D:\02_Games\01_Steam\Steam\config\stplug-in",
-    [string]$MainAccountDir = "D:\02_Games\01_Steam\Steam\userdata\1398488476",
+    [string]$MainAccountDir = "D:\02_Games\01_Steam\Steam\userdata\<main-id>",
     [int]$TightLoopMs = 0,
     [string]$ResolveHost = "key.steamofl.com"
 )

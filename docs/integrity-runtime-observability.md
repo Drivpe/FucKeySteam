@@ -300,7 +300,7 @@ uRuntimeGuard._restart_watchdog
 
 | 探针 | 硬编码路径 | 行号 |
 |---|---|---|
-| `probe.py` | `DLL = r"C:\Users\Hidriver\AppData\Local\Temp\onefile_30472_056169_vA6cakJs2g8\main.dll"` | 第 6 行 |
+| `probe.py` | `DLL = r"<USERPROFILE>\AppData\Local\Temp\onefile_30472_056169_vA6cakJs2g8\main.dll"` | 第 6 行 |
 | `getobf.py` | `D = r"...\onefile_30472_056169_vA6cakJs2g8"` | 第 6 行 |
 | `readobf.py` | `D` 同上 | 第 6 行 |
 | `entry.py` | `D` 同上 | 第 6 行 |
@@ -311,7 +311,7 @@ uRuntimeGuard._restart_watchdog
 
 **实测该目录已不存在**：
 ```
-$ ls /mnt/c/Users/Hidriver/AppData/Local/Temp/ | grep -i onefile
+$ ls /mnt/c/Users/<user>/AppData/Local/Temp/ | grep -i onefile
 （无输出，exit 1）
 ```
 `Temp/` 下仅剩 `$RECYCLE.BIN` 与 `.GamingRoot`。Nuitka onefile 的解包目录带随机后缀（`onefile_<pid>_<hex>_<rand>`），每次启动重新生成、退出即删除——**该路径本质上不可硬编码**。
@@ -320,7 +320,7 @@ $ ls /mnt/c/Users/Hidriver/AppData/Local/Temp/ | grep -i onefile
 
 ```json
 "outer": "Traceback (most recent call last):
-  File \"C:\\Users\\Hidriver\\AppData\\Local\\Temp\\ks_re\\probe.py\", line 12, in <module>
+  File \"C:\\Users\\<user>\\AppData\\Local\\Temp\\ks_re\\probe.py\", line 12, in <module>
     m = importlib.util.module_from_spec(spec)
   File \"<frozen importlib._bootstrap>\", line 810, in module_from_spec
 AttributeError: 'NoneType' object has no attribute 'loader'"
