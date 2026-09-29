@@ -117,7 +117,7 @@ cp _re/backup/Shikieiki_orig/{verification.cache,first_run.cache,shiki.json,shik
 
 **两处路径前提**（早先未写明，照抄命令会失败）：
 
-- 仓库根 = `D:\03_Work\03_Develop\keysteam-unlock-spike`
+- 仓库根 = `D:\03_Work\03_Develop\FucKeySteam`
 - 样本工作区 = `D:\03_Work\03_Develop\KeySteam v2.99`
 
 下述命令中 `host\host.exe` 是**相对路径**，隐含「已 cd 到仓库根」。`--dll` 指向的是**另一棵目录树**（样本工作区），必须给绝对路径。
@@ -326,7 +326,7 @@ Get-Process + Get-NetTCPConnection 一次完整采样 = 224 ms
 `config/stplug-in/` 与数据目录在每次运行后都可能被改。恢复命令（幂等，可重复执行）：
 
 ```bash
-cd /mnt/d/03_Work/03_Develop/keysteam-unlock-spike
+cd /mnt/d/03_Work/03_Develop/FucKeySteam
 
 # (a) 插件目录：从最新备份恢复，核对 5 个文件
 BK=$(ls -d .scratch/stplug-in-backup-* | tail -1)
@@ -369,7 +369,7 @@ head -c 3 "/mnt/d/03_Work/03_Develop/KeySteam-v2.99/_re/monitor_keysteam.ps1" | 
 powershell.exe -NoProfile -Command "\$e=\$null;[System.Management.Automation.Language.Parser]::ParseFile('D:\03_Work\03_Develop\KeySteam v2.99\_re\monitor_keysteam.ps1',[ref]\$null,[ref]\$e)|Out-Null;if(\$e.Count -eq 0){'SYNTAX OK'}"
 
 # 1. 重编宿主（不要相信仓库里的 host.exe —— 曾出现过与源码不同步的旧件）
-cd "/mnt/d/03_Work/03_Develop/keysteam-unlock-spike" && bash host/build.sh
+cd "/mnt/d/03_Work/03_Develop/FucKeySteam" && bash host/build.sh
 
 # 2. 恢复插件目录（样本会清理它；两次运行前都做，保证初始状态一致）
 TS=$(date +%Y%m%d-%H%M%S)
@@ -400,14 +400,14 @@ reg.exe query "HKCU\Software\Valve\Steam\ActiveProcess" /v ActiveUser
    ```bash
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
      "D:\03_Work\03_Develop\KeySteam v2.99\_re\monitor_keysteam.ps1" \
-     -Seconds 600 -LogDir "D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\run-<TS>" \
-     > "/mnt/d/03_Work/03_Develop/keysteam-unlock-spike/.scratch/run-<TS>/monitor-stdout.txt" 2>&1 &
+     -Seconds 600 -LogDir "D:\03_Work\03_Develop\FucKeySteam\.scratch\run-<TS>" \
+     > "/mnt/d/03_Work/03_Develop/FucKeySteam/.scratch/run-<TS>/monitor-stdout.txt" 2>&1 &
    ```
    监控记录：观察名单内的进程、命名管道、样本相关网络连接、关键窗口标题、数据目录变化、**插件目录变化（含删除）**、**主号目录写入**。
 
 2. **在监控运行期间**，在 Windows 终端手动启动宿主：
    ```
-   cd /d D:\03_Work\03_Develop\keysteam-unlock-spike
+   cd /d D:\03_Work\03_Develop\FucKeySteam
    host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll"
    ```
    把 stdout 与 stderr 记入 `.scratch\run-<TS>\host-stdout.txt`（在 Windows 终端用 `2> file.txt` 或复制粘贴全量输出）。
@@ -634,7 +634,7 @@ const wchar_t *third = pass_third ? dll_path : NULL;
 ```bash
 # 跑之前
 cp -a "/mnt/d/02_Games/01_Steam/Steam/config/stplug-in" \
-      "/mnt/d/03_Work/03_Develop/keysteam-unlock-spike/.scratch/stplug-in-backup-$(date +%Y%m%d-%H%M%S)"
+      "/mnt/d/03_Work/03_Develop/FucKeySteam/.scratch/stplug-in-backup-$(date +%Y%m%d-%H%M%S)"
 ```
 
 跑完对照恢复。这是本轮唯一**预期会丢失**的东西。

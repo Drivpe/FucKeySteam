@@ -220,7 +220,7 @@ $ grep -n 'DR7_GD_BIT\|gd=None' probe_lib.py
 `#16`（含 10 条评论）、`#17`、`#18` **只存在于 GitHub**，无本地副本：
 
 ```
-$ gh api repos/Drivpe/keysteam-unlock-spike
+$ gh api repos/Drivpe/FucKeySteam
 {"message": "Sorry. Your account was suspended", "status": 403}
 ```
 
@@ -367,11 +367,11 @@ git diff --stat HEAD -- hwbp_data.py hwbp_ctrl.py hwbp16b.py
 git log --oneline -3
 ```
 
-工作目录 `keysteam-unlock-spike/`：
+工作目录 `FucKeySteam/`：
 
 ```
 grep -rn 'hwbp' docs/
-gh api repos/Drivpe/keysteam-unlock-spike
+gh api repos/Drivpe/FucKeySteam
 grep -n 'DR7_GD_BIT\|gd=None' "../KeySteam v2.99/_re/ghidra/probe_lib.py"
 ```
 

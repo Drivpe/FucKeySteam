@@ -311,20 +311,20 @@ a throwaway VM with no valuable Steam session.
 Baseline run, from Windows in the payload directory:
 
 ```cmd
-D:\path\to\keysteam-unlock-spike\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll"
+D:\path\to\FucKeySteam\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll"
 ```
 
 Comparison run, passing NULL instead of the DLL path (and still
 injecting the environment, so only the third argument varies):
 
 ```cmd
-D:\path\to\keysteam-unlock-spike\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll" --null-3rd
+D:\path\to\FucKeySteam\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll" --null-3rd
 ```
 
 Second comparison run, dropping only the environment variables:
 
 ```cmd
-D:\path\to\keysteam-unlock-spike\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll" --no-envp
+D:\path\to\FucKeySteam\host\host.exe --dll "D:\03_Work\03_Develop\KeySteam v2.99\_re\work\payload\main.dll" --no-envp
 ```
 
 Capture the log, since the host's diagnostics go to stderr:

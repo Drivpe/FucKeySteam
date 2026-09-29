@@ -1,7 +1,7 @@
 # Spec 状态登记（离线）
 
 **用途**：`/to-spec` 的正常收尾动作是「publish 到 issue tracker + 打 `ready-for-agent` 标签」。
-本仓库的 issue tracker 是 GitHub（`Drivpe/keysteam-unlock-spike`），**当前不可达**（原因见下），
+本仓库的 issue tracker 是 GitHub（`Drivpe/FucKeySteam`），**当前不可达**（原因见下），
 故标签与发布状态在此离线登记。GitHub 恢复后应照此补打。
 
 ## 处置
@@ -181,11 +181,11 @@ adc6d61  refactor         常量与 API 重抄收尾（#7）
 - 独立仓建在 `_re/ghidra/`，分支 `master`，初始提交 `f16252b`
 - 217 文件 / 784K（源目录 935M，压缩到 0.08%）
 - 备份：本地裸仓 `_re/backup/ghidra-repo-20260917.git`，已克隆验证（217 文件、字节一致）
-- GitHub 恢复后可加 remote 同步；该仓**独立于** `keysteam-unlock-spike`，与其封禁状态无关
+- GitHub 恢复后可加 remote 同步；该仓**独立于** `FucKeySteam`，与其封禁状态无关
 
 ## 阻塞原因（2026-09-17 实测）
 
-`gh api repos/Drivpe/keysteam-unlock-spike` 返回：
+`gh api repos/Drivpe/FucKeySteam` 返回：
 
 ```
 {"message": "Sorry. Your account was suspended", "status": "403"}
@@ -193,7 +193,7 @@ adc6d61  refactor         常量与 API 重抄收尾（#7）
 
 **账号级封禁**，非 token 过期。`gh auth status` 报的「token invalid」是症状。
 
-**影响面**：本机有 4 个仓库指向该账号（`keysteam-unlock-spike`、`kingdee-kit-private`、
+**影响面**：本机有 4 个仓库指向该账号（`FucKeySteam`、`kingdee-kit-private`、
 `kingdee-knowledge-kit`、`Lingya`）。其余三个不在本 spec 范围内。
 
 **数据风险（重要）**：本地 clone 完整（36 个提交，`behind: 0`），**代码与文档无损失**。

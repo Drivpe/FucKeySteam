@@ -1,6 +1,6 @@
 param(
     [string]$Sample = "D:\03_Work\03_Develop\KeySteam v2.99\KeySteam.exe",
-    [string]$AclExe = "D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\ksinj\acltest.exe",
+    [string]$AclExe = "D:\03_Work\03_Develop\FucKeySteam\.scratch\ksinj\acltest.exe",
     [int]$WaitSec  = 14
 )
 $ErrorActionPreference = "Continue"

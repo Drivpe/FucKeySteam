@@ -27,7 +27,7 @@ They live in the **workspace**, not in this repository.
 │   ├── KeySteam-无验证运行-调研.md
 │   ├── KeySteam-弹窗机制分析.md
 │   └── _re/                     ← evidence, scripts, backups, payload copy
-└── keysteam-unlock-spike/       ← this repo: docs, scripts, host source
+└── FucKeySteam/       ← this repo: docs, scripts, host source
     ├── docs/agents/
     └── .scratch/
 ```

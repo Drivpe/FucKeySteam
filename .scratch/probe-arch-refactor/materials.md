@@ -209,7 +209,7 @@ make_hw_bp(prev_dr7, addrs, *, rw, length, clear_all_slots=True) -> (dr7, (dr0, 
 
 ## 6. 仓库纪律（拆工单时子代理必须继承的契约）
 
-**本仓库最强的约束**。`keysteam-unlock-spike/docs/agents/domain.md` 的漂移登记表实测 **40 行**记录，全部是同类认知错误，且有数条写明"same error shape ... now hit for the third time"。
+**本仓库最强的约束**。`FucKeySteam/docs/agents/domain.md` 的漂移登记表实测 **40 行**记录，全部是同类认知错误，且有数条写明"same error shape ... now hit for the third time"。
 
 **对本次重构的直接含义**：子代理在这个目录上工作，最容易犯的错与逆向侧**是同一类**——把"没搜到"当成"不存在"。§2.1 的每个数字都已带复现命令，正是为了防这个。
 
@@ -227,8 +227,8 @@ make_hw_bp(prev_dr7, addrs, *, rw, length, clear_all_slots=True) -> (dr7, (dr0, 
 
 - **标签**：`docs/agents/triage-labels.md` 定义五角色映射。spec 走完 `/to-spec` 应落 **`ready-for-agent`**；子代理产出的发现先落 `needs-triage`。
 - **ADR 位置**：`docs/adr/`。现有 **1 份** —— `0001-legal-ticket-over-dialog-elimination.md`。若本次重构引入新的架构决策（尤其 §8.1 的"等价优先于正确"这一取舍），**它够格单独写一份 ADR**：这是一个会在未来被反复质疑的决定，理由必须留档。
-- **读票方式**：`gh api repos/Drivpe/keysteam-unlock-spike/issues/<n>`，**禁止** `gh issue view`（gh 2.46.0 因 Projects classic 弃用直接 exit 1）。
-- **两目录纪律**：仓库 = `keysteam-unlock-spike`（git 跟踪）；工作区 = `KeySteam v2.99`（**永不**纳入 git）。`_re/ghidra/` 属于**工作区**，本次要新建的独立仓必须自建 deny-list，不得反向污染。见 `docs/agents/issue-tracker.md`。
+- **读票方式**：`gh api repos/Drivpe/FucKeySteam/issues/<n>`，**禁止** `gh issue view`（gh 2.46.0 因 Projects classic 弃用直接 exit 1）。
+- **两目录纪律**：仓库 = `FucKeySteam`（git 跟踪）；工作区 = `KeySteam v2.99`（**永不**纳入 git）。`_re/ghidra/` 属于**工作区**，本次要新建的独立仓必须自建 deny-list，不得反向污染。见 `docs/agents/issue-tracker.md`。
 
 ---
 
@@ -399,7 +399,7 @@ make_hw_bp(prev_dr7, addrs, *, rw, length, ...) -> (dr7, (dr0, dr1, dr2, dr3))
 > 本节只列**真正未决**项。本轮已裁定的见 §8.1–§8.5；范围变更见 §8-ter。
 
 1. **安全网建仓的具体排除项**——需 `git status` 人工过目后再定，不能盲提。
-2. **本素材与 `keysteam-unlock-spike` 的 `#13` map 的关系**：交接建议作独立票（与"改样本消弹窗"这个 Destination 无关）。尚未开票。
+2. **本素材与 `FucKeySteam` 的 `#13` map 的关系**：交接建议作独立票（与"改样本消弹窗"这个 Destination 无关）。尚未开票。
 3. **缺陷 2（GD 位）的票何时开**——§8.1 已定"另开票"，但该票**优先级高于重构本身**（可能影响既有实验结论），开票时机待定。
 4. **`#16` 的下游关系**——ADR 0001 有一句从 9/15 挂到今天的未决（"`命中时不经过某分支` 是否真是运行时路径，需重新审视"），而 `#16` 的实验正是其下游。操作者决定**留给逆向主线**，不在本轮处理。
 

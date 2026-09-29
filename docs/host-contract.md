@@ -36,11 +36,11 @@ x86_64-w64-mingw32-gcc.exe: fatal error: cannot execute 'cc1': CreateProcess: No
 
 ```
 $ gcc.exe -print-search-dirs
-install:  D:/03_Work/03_Develop/keysteam-unlock-spike/../lib/gcc/x86_64-w64-mingw32/15.1.0/
-programs: =D:/03_Work/03_Develop/keysteam-unlock-spike/../libexec/gcc/x86_64-w64-mingw32/15.1.0/;...
+install:  D:/03_Work/03_Develop/FucKeySteam/../lib/gcc/x86_64-w64-mingw32/15.1.0/
+programs: =D:/03_Work/03_Develop/FucKeySteam/../libexec/gcc/x86_64-w64-mingw32/15.1.0/;...
 ```
 
-搜索根被推导为**当前工作目录**（`.../keysteam-unlock-spike/`），而非 `C:/Program Files/mingw64/`。于是 `../libexec/gcc/...` 指向一个不存在的位置，gcc 便找不到 `cc1.exe`。错误信息里的 "cc1" 是**误导**——`cc1.exe` 本身完好存在于 `C:/Program Files/mingw64/libexec/gcc/x86_64-w64-mingw32/15.1.0/`（41,524,736 B）。
+搜索根被推导为**当前工作目录**（`.../FucKeySteam/`），而非 `C:/Program Files/mingw64/`。于是 `../libexec/gcc/...` 指向一个不存在的位置，gcc 便找不到 `cc1.exe`。错误信息里的 "cc1" 是**误导**——`cc1.exe` 本身完好存在于 `C:/Program Files/mingw64/libexec/gcc/x86_64-w64-mingw32/15.1.0/`（41,524,736 B）。
 
 **解法**：用 `-B` 显式指定工具链的四个搜索根。四个**缺一不可**，已逐个删除验证：
 

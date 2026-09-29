@@ -11,7 +11,7 @@ param(
     [int]$HoldSec    = 25,
     [int]$InjectAtMs = 0,
     [string]$Sample  = "D:\03_Work\03_Develop\KeySteam v2.99\KeySteam.exe",
-    [string]$Probe   = "D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\ksinj\probe.exe"
+    [string]$Probe   = "D:\03_Work\03_Develop\FucKeySteam\.scratch\ksinj\probe.exe"
 )
 
 $ErrorActionPreference = "Continue"
@@ -35,7 +35,7 @@ $pipes = [System.IO.Directory]::GetFiles("\\.\pipe\") | Where-Object { $_ -match
 if ($pipes) { W "WARN leftover pipes: $($pipes -join ', ')" }
 
 # --- 1. monitor first ---
-$monScript = "D:\03_Work\03_Develop\keysteam-unlock-spike\scripts\monitor_keysteam.ps1"
+$monScript = "D:\03_Work\03_Develop\FucKeySteam\scripts\monitor_keysteam.ps1"
 $monSec    = $HoldSec + 30
 W "starting monitor (before sample), ${monSec}s"
 $monJob = Start-Job -ScriptBlock {

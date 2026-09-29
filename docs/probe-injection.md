@@ -416,7 +416,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .scratch\ksinj\run_bootinj.p
 
 ### 8.6 工具清单
 
-全部位于 `D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\ksinj\`：
+全部位于 `D:\03_Work\03_Develop\FucKeySteam\.scratch\ksinj\`：
 
 | 工具 | 作用 |
 |---|---|

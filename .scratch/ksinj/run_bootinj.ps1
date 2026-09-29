@@ -1,7 +1,7 @@
 param(
     [string]$Sample = "D:\03_Work\03_Develop\KeySteam v2.99\KeySteam.exe",
-    [string]$Exe    = "D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\ksinj\bootinj.exe",
-    [string]$Dll    = "D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\ksinj\payload\ksprobe.dll",
+    [string]$Exe    = "D:\03_Work\03_Develop\FucKeySteam\.scratch\ksinj\bootinj.exe",
+    [string]$Dll    = "D:\03_Work\03_Develop\FucKeySteam\.scratch\ksinj\payload\ksprobe.dll",
     [int]$DurMs     = 20000
 )
 $ErrorActionPreference = "Continue"

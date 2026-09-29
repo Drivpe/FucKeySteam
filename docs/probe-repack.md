@@ -216,7 +216,7 @@ payload main.dll exists = True
 ```powershell
 $probeDir='D:\03_Work\03_Develop\KeySteam v2.99\_re\probe\payload_mod'
 $env:NUITKA_ONEFILE_DIRECTORY=$probeDir
-& 'D:\03_Work\03_Develop\keysteam-unlock-spike\host\host.exe' --dll "$probeDir\main.dll"
+& 'D:\03_Work\03_Develop\FucKeySteam\host\host.exe' --dll "$probeDir\main.dll"
 ```
 
 **实测输出**（宿主 stderr，逐字）：
@@ -228,7 +228,7 @@ $env:NUITKA_ONEFILE_DIRECTORY=$probeDir
 [host] run_code @ 00007FF92333B380
 [host] argc     = 1
 [host]   argv[0] = D:\...\payload_mod\KeySteam.py
-[host]   NUITKA_ONEFILE_DIRECTORY=D:\03_Work\03_Develop\keysteam-unlock-spike\host
+[host]   NUITKA_ONEFILE_DIRECTORY=D:\03_Work\03_Develop\FucKeySteam\host
 [host]   NUITKA_ORIGINAL_ARGV0=D:\...\payload_mod\KeySteam.py
 [host] calling run_code(argc=1, argv=00000269A5789E70, dll=D:\...\payload_mod\main.dll)
 ```
@@ -442,7 +442,7 @@ objdump -d --start-address=0x18143b380 --stop-address=0x18143b3a0 \
 
 **外部宿主加载 `main.dll`——不动 `KeySteam.exe` 一个字节。**
 
-`_re/probe/payload_mod/main.dll`（标记版）+ `keysteam-unlock-spike/host/host.exe`，实测能完整驱动 GUI、稳定运行、加载指定 DLL。
+`_re/probe/payload_mod/main.dll`（标记版）+ `FucKeySteam/host/host.exe`，实测能完整驱动 GUI、稳定运行、加载指定 DLL。
 
 它比重打包 onefile 轻的原因：
 

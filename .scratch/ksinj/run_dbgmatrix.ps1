@@ -1,6 +1,6 @@
 param(
     [string]$Sample = "D:\03_Work\03_Develop\KeySteam v2.99\KeySteam.exe",
-    [string]$Exe    = "D:\03_Work\03_Develop\keysteam-unlock-spike\.scratch\ksinj\dbgmatrix.exe"
+    [string]$Exe    = "D:\03_Work\03_Develop\FucKeySteam\.scratch\ksinj\dbgmatrix.exe"
 )
 $ErrorActionPreference = "Continue"
 $stamp  = Get-Date -Format "yyyyMMdd-HHmmss"

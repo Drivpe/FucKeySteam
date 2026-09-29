@@ -54,7 +54,7 @@ head -c 3 scripts/monitor_keysteam.ps1 | od -An -tx1   # expect: ef bb bf
 Parse-check:
 
 ```bash
-powershell.exe -NoProfile -Command "\$e=\$null;[System.Management.Automation.Language.Parser]::ParseFile('D:\03_Work\03_Develop\keysteam-unlock-spike\scripts\monitor_keysteam.ps1',[ref]\$null,[ref]\$e)|Out-Null;if(\$e.Count -eq 0){'SYNTAX OK'}else{\$e|%{\$_.Message}}"
+powershell.exe -NoProfile -Command "\$e=\$null;[System.Management.Automation.Language.Parser]::ParseFile('D:\03_Work\03_Develop\FucKeySteam\scripts\monitor_keysteam.ps1',[ref]\$null,[ref]\$e)|Out-Null;if(\$e.Count -eq 0){'SYNTAX OK'}else{\$e|%{\$_.Message}}"
 ```
 
 ### Invocation
