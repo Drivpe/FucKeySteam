@@ -42,7 +42,7 @@ W "=== dbgmatrix output ==="
 if (Test-Path $out) { Get-Content $out | ForEach-Object { Write-Host $_ } }
 
 # 主号目录基线核对
-$ma = "D:\02_Games\01_Steam\Steam\userdata\1398488476"
+$ma = "D:\02_Games\01_Steam\Steam\userdata\<main-id>"
 $cnt = (Get-ChildItem $ma -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
 W "main account files = $cnt"
 $stub = "D:\02_Games\01_Steam\Steam\config\stplug-in"

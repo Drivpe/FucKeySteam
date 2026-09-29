@@ -50,7 +50,7 @@ cp -a "_re/backup/round7-20260916-probe/KeySteam.exe.orig" "D:/03_Work/03_Develo
 **共同硬性约束**：
 - 不得用 `timeout` 包裹样本（杀不掉，留孤儿进程）；运行前查 `Get-Process KeySteam`
 - 运行后确认无残留进程与 `keysteam` 管道
-- 主号目录 `userdata/1398488476` 不得被写入（537 文件基线）
+- 主号目录 `userdata/<main-id>` 不得被写入（537 文件基线）
 - 样本会杀 Steam 进程并清理 `config/stplug-in/`——跑前确认备份完好
 
 ---
@@ -224,5 +224,5 @@ PY
 | `keysteam` 命名管道 | 无残留 |
 | 样本哈希 | `8f6dc310…` **未变** |
 | `config/stplug-in/` | 5 文件（与备份一致） |
-| `userdata/1398488476` | 537 文件（未被写入） |
+| `userdata/<main-id>` | 537 文件（未被写入） |
 | `%TEMP%\onefile_*` | 已清理（释放 2.16 GB） |

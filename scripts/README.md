@@ -9,13 +9,13 @@ Runtime observation script for the two runs described in `docs/run-plan.md`.
 | Location | Tracked? | Role |
 | --- | --- | --- |
 | `scripts/monitor_keysteam.ps1` (here, in the repo) | yes | The version under version control. Edit this one. |
-| `/mnt/d/03_Work/03_Develop/KeySteam v2.99/_re/monitor_keysteam.ps1` | no — the workspace is not a git repo | The copy the run commands actually invoke. |
+| `/mnt/d/03_Work/03_Develop/KeySteam-v2.99/_re/monitor_keysteam.ps1` | no — the workspace is not a git repo | The copy the run commands actually invoke. |
 
 After editing here, copy it to the workspace path so the run commands pick up the change:
 
 ```bash
 cp scripts/monitor_keysteam.ps1 \
-   "/mnt/d/03_Work/03_Develop/KeySteam v2.99/_re/monitor_keysteam.ps1"
+   "/mnt/d/03_Work/03_Develop/KeySteam-v2.99/_re/monitor_keysteam.ps1"
 ```
 
 ### What it observes
@@ -28,7 +28,7 @@ Seven things, all read-only:
 - Window titles — critical patterns unconditionally, others only from watched processes
 - `%APPDATA%\Shikieiki\` file additions and modifications
 - `config\stplug-in\` — by **hash**, so deletions and rewrites are both legible (`mtime` cannot distinguish them, and the sample deletes files here)
-- `userdata\1398488476\` — main-account write detection; any hit is logged with a `!!!` prefix
+- `userdata\<main-id>\` — main-account write detection; any hit is logged with a `!!!` prefix
 
 ### Two matching bugs fixed on 2026-09-15
 

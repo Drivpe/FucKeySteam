@@ -117,7 +117,7 @@ bootstrap 理论可做，但同样受 2.6 限制。
 **关键对照**（排除「缺 `SeDebugPrivilege`」这一解释）：
 
 ```
-会话身份：DESKTOP-FQI0FAF\Hidriver，IsAdmin=False
+会话身份：DESKTOP-<host>\<user>，IsAdmin=False
 令牌权限：SeLockMemory / SeShutdown / SeChangeNotify / SeUndock / SeIncreaseWorkingSet / SeTimeZone
           —— 无 SeDebugPrivilege
 
@@ -337,7 +337,7 @@ GUI 侧的检测能力**本任务无法实测**，因为 `OpenProcess` 在 `VM_W
 | 项 | 基线 | 本次终态 |
 |---|---|---|
 | `KeySteam.exe` SHA256 | `8f6dc310…803a` | `8f6dc310…803a` **未变** |
-| 主号目录 `userdata\1398488476` 文件数 | 537 | **537**（未写入） |
+| 主号目录 `userdata\<main-id>` 文件数 | 537 | **537**（未写入） |
 | `config\stplug-in` 文件数 | 5 | **5** |
 | 我的样本进程残留 | 0 | **0** |
 | `_re\probe\` 兄弟会话进程 | 5940 / 17304 / 25504 | **未触碰，仍存活** |
@@ -354,7 +354,7 @@ GUI 侧的检测能力**本任务无法实测**，因为 `OpenProcess` 在 `VM_W
 ```bash
 mkdir -p /tmp/ks2 && python3 - <<'PY'
 import struct
-p='/mnt/d/03_Work/03_Develop/KeySteam v2.99/_re/bin/main.dll'
+p='/mnt/d/03_Work/03_Develop/KeySteam-v2.99/_re/bin/main.dll'
 d=open(p,'rb').read()
 e=struct.unpack_from('<I',d,0x3c)[0]
 nsec=struct.unpack_from('<H',d,e+6)[0]

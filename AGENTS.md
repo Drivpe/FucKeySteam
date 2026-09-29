@@ -21,9 +21,9 @@ The old wording here said "Work in an isolated VM. Do not run it on a machine wh
 
 | Asset | Size | Why it matters |
 | --- | --- | --- |
-| `userdata/1398488476/` (account `zdk84214`, the **main account**, currently logged out) | 9.4 M | Contains `ugcmsgcache` (7.0 M) and a game save under `1868140` (1.3 M). This is the only account holding real progress, and the part that cannot be rebuilt from the cloud. |
-| `userdata/702986969/` (account `drivpe114514`, the throwaway account, currently logged in) | 816 K | Current active session; small. |
-| `userdata/718396978/` (account `rerysxq2045`, logged out) | 68 K | Negligible. |
+| `userdata/<main-id>/` (account `<main-account>`, the **main account**, currently logged out) | 9.4 M | Contains `ugcmsgcache` (7.0 M) and a game save under `1868140` (1.3 M). This is the only account holding real progress, and the part that cannot be rebuilt from the cloud. |
+| `userdata/<alt-id>/` (account `<alt-account>`, the throwaway account, currently logged in) | 816 K | Current active session; small. |
+| `userdata/<third-id>/` (account `<third-account>`, logged out) | 68 K | Negligible. |
 | `config/` and `config.vdf` | 64 M / 41,830 B | All three accounts have `RememberPassword=1`, and there are **zero** `ssfn*` token files. Session credentials live here — reading or rewriting it exposes all three accounts at once. |
 | `steamapps/` | 385 G, 26 titles, single library | High replacement cost, but recoverable by re-verifying files. |
 
@@ -68,9 +68,9 @@ It kills Steam processes and cleans startup plugin files as defined behaviour, n
 
 ## Main-account protection: why no ACL is applied
 
-The operating constraint for this work is "do not touch `userdata/1398488476/`" (the main account). That is met by evidence, not by a filesystem ACL. Measured facts:
+The operating constraint for this work is "do not touch `userdata/<main-id>/`" (the main account). That is met by evidence, not by a filesystem ACL. Measured facts:
 
-- `1398488476` has **zero** hits anywhere in `main.dll` (all ASCII and integer encodings) — there is no hardcoded, account-targeted write path.
+- `<main-id>` has **zero** hits anywhere in `main.dll` (all ASCII and integer encodings) — there is no hardcoded, account-targeted write path.
 - Account selection is single-valued: `HKCU\Software\Valve\Steam\ActiveProcess\ActiveUser`, with `loginusers.vdf` as a secondary source. There is no loop that walks all three account directories and writes each.
 - The only directory enumeration is a diff, not a traversal: `_list_numeric_files` polls `userdata/` for *newly created* numeric directories after launching a game.
 - `userdata/` is a **read-only source** for this sample (`source_userdata_dir`). Writes go to an authorization **output** directory, `target_userdata_dir = output_dir/userdata/<user_id>/`, and the `rmtree` found at `0x8a0fbd` removes same-named copies *in that output directory*.

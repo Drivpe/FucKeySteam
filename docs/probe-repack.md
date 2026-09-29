@@ -51,7 +51,7 @@
 
 ```bash
 python3 - <<'PY'
-d=open('/mnt/d/03_Work/03_Develop/KeySteam v2.99/KeySteam.exe','rb').read()
+d=open('/mnt/d/03_Work/03_Develop/KeySteam-v2.99/KeySteam.exe','rb').read()
 open('/tmp/ks2/s_full.zst','wb').write(d[0x235b3:])   # 从 magic 到文件末
 PY
 7z x -so /tmp/ks2/s_full.zst > /tmp/ks2/payload.bin
@@ -366,7 +366,7 @@ argv → resolve → _entry_path → suffix → strip → casefold → '.py' / '
 # ① 节转储
 mkdir -p /tmp/ks2 && python3 - <<'PY'
 import struct
-p='/mnt/d/03_Work/03_Develop/KeySteam v2.99/_re/bin/main.dll'
+p='/mnt/d/03_Work/03_Develop/KeySteam-v2.99/_re/bin/main.dll'
 d=open(p,'rb').read()
 e=struct.unpack_from('<I',d,0x3c)[0]
 nsec=struct.unpack_from('<H',d,e+6)[0]
@@ -382,20 +382,20 @@ PY
 
 # ② payload 解包 + 一致性校验
 python3 -c "
-d=open('/mnt/d/03_Work/03_Develop/KeySteam v2.99/KeySteam.exe','rb').read()
+d=open('/mnt/d/03_Work/03_Develop/KeySteam-v2.99/KeySteam.exe','rb').read()
 open('/tmp/ks2/s_full.zst','wb').write(d[0x235b3:])"
 7z x -so /tmp/ks2/s_full.zst > /tmp/ks2/payload.bin
 sha256sum /tmp/ks2/payload.bin   # 52731314a9246f7badc748038aad0a8126b54c05a1ba72fe88c50c8bb2d12538
 
 # ③ 导出表
-objdump -p "/mnt/d/03_Work/03_Develop/KeySteam v2.99/_re/bin/main.dll" | sed -n '/The Export Tables/,/^$/p'
+objdump -p "/mnt/d/03_Work/03_Develop/KeySteam-v2.99/_re/bin/main.dll" | sed -n '/The Export Tables/,/^$/p'
 
 # ④ run_code 签名
 objdump -d --start-address=0x18143b380 --stop-address=0x18143b3a0 \
-  "/mnt/d/03_Work/03_Develop/KeySteam v2.99/_re/bin/main.dll"
+  "/mnt/d/03_Work/03_Develop/KeySteam-v2.99/_re/bin/main.dll"
 
 # ⑤ 宿主加载（Windows 侧）
-# powershell.exe -File C:\Users\Hidriver\AppData\Local\Temp\tamper_check.ps1
+# powershell.exe -File <USERPROFILE>\AppData\Local\Temp\tamper_check.ps1
 ```
 
 ---
@@ -445,6 +445,6 @@ objdump -d --start-address=0x18143b380 --stop-address=0x18143b3a0 \
 
 **进程与管道**：实验结束已确认无 `KeySteam` / `host` 残留进程。管道 `keysteam_guard_aea5a276168c742f` 存在，经核验是**先前强杀样本时泄漏的孤儿管道**（句柄未释放），**非**本次宿主创建——实验中的宿主模式下无 `--watchdog` 子进程。
 
-**数据目录**：`userdata/1398488476` 零文件（未被写入）。实验期间 `verification.cache`（605 B，`b044406c…`）出现在数据目录，经比对与 `_re/backup/round5-20260915-valid-ticket/verification.cache` **字节相同**——系并发实验恢复，**非本次实验写入**（本探针全程使用独立 payload 副本，未触发样本的票面读写路径）。
+**数据目录**：`userdata/<main-id>` 零文件（未被写入）。实验期间 `verification.cache`（605 B，`b044406c…`）出现在数据目录，经比对与 `_re/backup/round5-20260915-valid-ticket/verification.cache` **字节相同**——系并发实验恢复，**非本次实验写入**（本探针全程使用独立 payload 副本，未触发样本的票面读写路径）。
 
 **遗留物**：`%TEMP%` 下有多批 `onefile_*` 目录（117 文件/个），来自被强杀的样本进程——正常退出时样本会自行清理。
