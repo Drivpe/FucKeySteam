@@ -1,0 +1,49 @@
+FucKeySteam
+Copyright 2026 Drivpe
+
+This product includes software developed as part of the
+FucKeySteam project (https://github.com/Drivpe/FucKeySteam).
+
+--------------------------------------------------------------------
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+--------------------------------------------------------------------
+
+THIRD-PARTY NOTICES
+===================
+
+This repository contains only original analysis documentation, probe
+scripts and a test host written by the FucKeySteam project.
+
+No third-party source code is vendored into this repository.
+
+The following upstream projects are *referenced* (by name, URL or
+observed behaviour) in documentation but their code is NOT included:
+
+  * KeySteam v2.99
+      The binary under study. Not redistributed here; see .gitignore.
+      Note: the sample itself carries no license file and no SPDX
+      identifier. No license was granted by its author.
+
+  * ShikiLuaQwQ  (github.com/ShikieikiC/ShikiLuaQwQ)
+      Data-only Lua/QwQ library. No license file present upstream
+      (GitHub API reports license = null). Not redistributed here.
+
+  * OpenSteamTool  (github.com/OpenSteam001/OpenSteamTool)
+      Licensed under GPL-3.0 upstream. It is the base of a kernel
+      shipped inside the sample, not of any code in this repository.
+      GPL-3.0 is a copyleft license; no GPL-3.0 code is included in
+      this repository, so its terms do not extend to it.
+
+The Apache-2.0 license declared in LICENSE applies to the original
+content of this repository only. It does not and cannot relicense any
+third-party work referenced above.

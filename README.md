@@ -1,8 +1,10 @@
 # FucKeySteam
 
-`KeySteam v2.99` 的逆向工程工作区（私有）。
+`KeySteam v2.99` 的逆向工程工作区。
 
 **目标**：让样本在**不弹验证码对话框**的情况下启动并可用。
+
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 ---
 
@@ -50,3 +52,22 @@
 
 **运行时观测必须遵守 UIA 纪律**（违反则测试全部无效），详见
 `docs/rounds/INDEX.md` 第 5 节。
+
+---
+
+## 许可
+
+本仓库原创内容（文档、探针脚本、测试宿主源码）以 **Apache License 2.0**
+授权，全文见 [`LICENSE`](LICENSE)，第三方归属见 [`NOTICE`](NOTICE)。
+
+**该许可只覆盖本仓库原创内容**，不覆盖任何被引用或被分析的第三方作品：
+
+| 上游 | 许可状态 | 本仓库是否含其代码 |
+|---|---|---|
+| `KeySteam v2.99`（分析对象） | 上游**无任何许可声明** | 否（`.gitignore` 排除） |
+| `ShikiLuaQwQ`（Lua 库） | 上游**无许可文件**（GitHub API `license = null`） | 否 |
+| `OpenSteamTool` | 上游 **GPL-3.0** | 否 |
+
+注意：`ShikiLuaQwQ` 上游**没有**选择 Apache-2.0，因此本仓库的许可与上游
+**并不一致**——这是刻意的，理由见 `NOTICE`。GPL-3.0 的传染性不适用，
+因为本仓库不含任何 GPL 代码。
