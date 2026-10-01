@@ -149,12 +149,91 @@ owner = 'Drivpe////'  (10 字符，与 'Cec1c/////' 等长)
 路径段 = Drivpe/////ShikiLuaQwQ   (22 字符，与 Cec1c//////ShikiLuaQwQ 等长)
 ```
 
-镜像回退链（对 fork 形式实测）：`ghproxy.net` 200、`gh-proxy.com` 200
-（`ghfast.top` 该次未通，与 r59 观测一致，有其余镜像兜底）。
+### 3.1 运行时验证（决定性）
 
-> ⚠ **r60 尚未做 GUI 端到端验收。** 目前证据是：静态 owner 字段解码正确、
-> 补丁外零漂移、fork 侧内容 md5 与父仓库一致、镜像可达。
-> 「点更新选中Lua → 4 个 .ks 落地」这一步**还没有跑**，需要按 UIA 纪律实测。
+从 r60 进程内存抓到的**真实构造 URL**（`urlprobe.py`，全选+点按钮后扫内存）：
+
+```
+https://raw.githubusercontent.com/Drivpe/////ShikiLuaQwQ/main/version.json
+https://raw.githubusercontent.com/Drivpe/////ShikiLuaQwQ/main/version.json?v=4da8a6cfb99b821b
+https://raw.githubusercontent.com/Drivpe/////ShikiLuaQwQ/main/QwQ/SHIKIb7c994c5eaf5bab8KAWAII/BHaI-…qwq
+https://wget.la/https://raw.githubusercontent.com/Drivpe/////ShikiLuaQwQ/main/QwQ/SHIKI…qwq
+https://ghfast.top/https://raw.githubusercontent.com/Drivpe/////ShikiLuaQwQ/main/QwQ/SHIKI…qwq
+https://cdn.jsdelivr.net/gh/Drivpe/////ShikiLuaQwQ@main/version.json
+```
+
+**补丁确实生效**，owner 段已是 `Drivpe////`，路径按预期构造。
+
+### 3.2 GUI 端到端验收：**未通过 —— 但原因是网络，不是补丁**
+
+实测 r60：点「更新选中Lua」后报
+
+```
+[ 错误 ] 入库失败：(3934270) 多少兄弟？（请检查网络连接）；…
+```
+
+**关键对照**：同一时刻用 **r59 原产物**跑同一测试，**报完全相同的错误**。
+`请检查网络连接` 是下载失败文案，不是 `lua 库未收录`（后者才是库结构问题）。
+⇒ **r60 与 r59 行为一致，补丁无回归。**
+
+根因实测（`raw.githubusercontent.com` 健康度）：
+
+| 程序会试的镜像 | 当前状态 |
+|---|---|
+| `raw.githubusercontent.com` | **0/6 ~ 0/20 全败** |
+| `wget.la` | **403** |
+| `ghfast.top` | **0/6 全败** |
+| `cdn.jsdelivr.net` | 见 §3.3，被 padding 打成 400 |
+
+**程序用的四个镜像，当时恰好全部不可用。** 而程序**不**使用的
+`gh-proxy.com`（8/8）、`ghproxy.net`（6/8）在同一时刻是好的 —— 所以
+这是「镜像集合覆盖不到」的问题，不是「库没了」。
+
+> **测量方法学自我纠正**：`e2e2.py` 在 stdout 里用 `l[:700]` 截断日志行，
+> 而错误文案出现在第 700 字符之后。因此**看 stdout 会误判为「无错误」**——
+> 必须读 `s2_edit_T*.txt` 原文。本轮我先看 stdout 得出过「通过」的错误印象，
+> 读原文后纠正为「未通过」。结论以文件原文为准。
+
+### 3.3 新发现：**padding 技巧会打断 jsdelivr**（r59 也有）
+
+这是本轮最重要的意外发现，且**不是 r60 引入的**：
+
+| jsdelivr 路径 | 结果 |
+|---|---|
+| `gh/ShikieikiC/ShikiLuaQwQ@main/version.json`（原版，owner 恰好 10 字符） | **200** |
+| `gh/Cec1c//////ShikiLuaQwQ@main/version.json`（r59） | **400** |
+| `gh/Drivpe/////ShikiLuaQwQ@main/version.json`（r60） | **400** |
+| 去 padding 归一化后 `gh/Cec1c/ShikiLuaQwQ@main/…` | 200 |
+
+对照实验（排除偶发）：
+
+| | 无 padding | 加 `/////` |
+|---|---|---|
+| `google/guava` | 200 | **400** |
+| `opencv/opencv` | 200 | **400** |
+
+⇒ jsdelivr **不做** GitHub raw 那种路径规范化，斜杠填充直接被判非法路径。
+
+**影响范围**：程序对 jsdelivr 的用法目前只见 `version.json`（更新检查），
+`.qwq` 下载走 raw/wget.la/ghfast.top。所以 padding 的代价是
+**丢掉 jsdelivr 这一条更新检查兜底**，不直接断下载。
+但仍减少了冗余 —— 对一个「越稳越好」的方案是实打实的减分。
+
+**推论（重要）**：owner 字段是 10 字符固定宽（`Shiki`+`eikiC`），
+**原版 `ShikieikiC` 恰好 10 字符，本来不需要 padding**。
+我们的替换必须凑满 10 字符，才被迫引入 `/////`。
+⇒ 若自持仓库的 owner 名**恰好 10 字符**，可以填满 10 字符而**零 padding**，
+jsdelivr 也就不会被打断。这是比 `Drivpe////` 更优的形态。
+
+候选（均已查证 404 = 可注册，长度正好 10）：
+`FucKLuaQwQ`、`FucKeyLuaQ`、`FucShikiQQ`、`ShikiLuaQW`、`FucKeyQwQx`。
+
+> ⚠ **r60 的端到端「文件落地」尚未确认。** 网络恢复后的那次运行日志里
+> 没有报错，但 `stplug-in` 下 4 个 `.ks` 的时间戳仍是 09-29（旧文件），
+> 说明那次可能**没有真正写入**（或写入了同名同内容文件、mtime 未变）。
+> 在把这个结论写死之前，需要在镜像健康时再跑一次并核对 mtime。
+> 结论：**r60 补丁本身已由内存 URL 证明有效；「下载成功」这一步受网络阻塞，
+> 未取得干净证据。**
 
 ---
 
